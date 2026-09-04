@@ -1,0 +1,12 @@
+[Unit]
+Description=Safely update HAPI when no agent task is executing
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__ROOT__/bin/scheduled-run
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=150%
+TimeoutStartSec=45min

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${HAPI_UPDATER_ROOT:-$HOME/.local/share/hapi-safe-updater}"; CONFIG="${HAPI_UPDATER_CONFIG:-$HOME/.config/hapi-safe-updater/config.json}"
+rendered=$("$ROOT/bin/config-env.py" "$CONFIG") || exit $?
+eval "$rendered"
+fail=0; check(){ if command -v "$1" >/dev/null; then echo "OK   $1: $(command -v "$1")"; else echo "FAIL missing $1"; fail=1; fi; }
+check python3; check "${HSU_NPM_BIN:-npm}"; check "${HSU_HAPI_BIN:-hapi}"
+python3 -c 'import sys,zoneinfo; assert sys.version_info >= (3,9)' && echo 'OK   Python >= 3.9 + zoneinfo' || { echo 'FAIL Python >= 3.9 with zoneinfo required'; fail=1; }
+case "${HSU_UPDATE_MODE:-package}" in source) check git; check "${HSU_BUN_BIN:-bun}";; package) :;; *) echo 'FAIL invalid UPDATE_MODE'; fail=1;; esac
+if [[ $(uname -s) == Darwin ]]; then check launchctl; else check systemctl; check systemd-analyze; fi
+"${HSU_HAPI_BIN:-hapi}" --version || fail=1
+[[ "$fail" == 0 ]] && echo 'Doctor: ready' || { echo 'Doctor: not ready'; exit 1; }

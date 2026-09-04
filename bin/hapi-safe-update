@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+PATH="${PATH:-}:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin"; export PATH
+
+ROOT="${HAPI_UPDATER_ROOT:-$HOME/.local/share/hapi-safe-updater}"
+CONFIG="${HAPI_UPDATER_CONFIG:-$HOME/.config/hapi-safe-updater/config.json}"
+rendered=$("$ROOT/bin/config-env.py" "$CONFIG") || exit $?
+eval "$rendered"
+get(){ local k=$1 d=$2 c="HSU_$1"; printf '%s' "${!k:-${!c:-$d}}"; }
+PACKAGE=$(get PACKAGE '@twsxtd/hapi'); CHANNEL=$(get CHANNEL latest); HAPI_BIN=$(get HAPI_BIN hapi); NPM_BIN=$(get NPM_BIN npm); BUN_BIN=$(get BUN_BIN bun)
+[[ "$PACKAGE" =~ ^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$ ]] || { echo "invalid npm PACKAGE=$PACKAGE" >&2; exit 2; }
+HAPI_HOME=$(get HAPI_HOME "$HOME/.hapi"); ROLE=$(get ROLE auto); UPDATE_MODE=$(get UPDATE_MODE package)
+SOURCE_REPO=$(get SOURCE_REPO https://github.com/tiann/hapi.git); PATCH_DIR=$(get PATCH_DIR "$HOME/.config/hapi-safe-updater/patches")
+USE_SUDO=$(get USE_SUDO auto); HEALTHCHECK_URL=$(get HEALTHCHECK_URL ''); VERIFY_COMMAND=$(get VERIFY_COMMAND '')
+QUIESCE_COMMAND=$(get QUIESCE_COMMAND ''); RESUME_COMMAND=$(get RESUME_COMMAND ''); KEEP_LOGS=$(get KEEP_LOGS 30); KEEP_BACKUPS=$(get KEEP_BACKUPS 3)
+UNKNOWN_RECENT_MINUTES=$(get UNKNOWN_RECENT_MINUTES 15)
+[[ "$ROLE" =~ ^(auto|hub|runner|hub\+runner)$ ]] || { echo "invalid ROLE=$ROLE" >&2; exit 2; }
+[[ "$UPDATE_MODE" =~ ^(package|source)$ ]] || { echo "invalid UPDATE_MODE=$UPDATE_MODE" >&2; exit 2; }
+[[ -z "$QUIESCE_COMMAND" && -z "$RESUME_COMMAND" || -n "$QUIESCE_COMMAND" && -n "$RESUME_COMMAND" ]] || { echo 'QUIESCE_COMMAND and RESUME_COMMAND must be configured together' >&2; exit 2; }
+
+STATE="$ROOT/state"; LOGS="$ROOT/logs"; WORK="$ROOT/worktrees"; mkdir -p -m 700 "$STATE" "$LOGS" "$WORK"
+[[ ! -f "$STATE/ROLLBACK_FAILED" ]] || { echo "ROLLBACK_FAILED exists; repair manually, verify HAPI, then remove $STATE/ROLLBACK_FAILED" >&2; exit 70; }
+if [[ "${HAPI_LOCK_HELD:-0}" != 1 ]]; then exec env HAPI_LOCK_HELD=1 "$ROOT/bin/lock-run.py" "$STATE/update.lock" "$0" "$@"; fi
+STAMP=$(date '+%Y%m%d-%H%M%S'); LOG="$LOGS/$STAMP.log"; : >"$LOG"; chmod 600 "$LOG"; exec > >(tee -a "$LOG") 2>&1
+log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }; die(){ log "ERROR: $*"; exit 1; }
+DRY=0; FORCE=0; for x in "$@"; do case "$x" in --dry-run) DRY=1;; --force) FORCE=1;; *) die "unknown argument $x";; esac; done
+version(){ "$HAPI_BIN" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?' | head -1; }
+idle(){ HAPI_HOME="$HAPI_HOME" "$ROOT/bin/hapi-idle-check.py" --unknown-recent-minutes "$UNKNOWN_RECENT_MINUTES"; }
+
+declare -a ACTIVE_UNITS=() ACTIVE_PLISTS=()
+discover_services(){
+  if [[ -n "$QUIESCE_COMMAND" ]]; then return; fi
+  if [[ "$(uname -s)" == Darwin ]]; then
+    shopt -s nullglob
+    for p in "$HOME"/Library/LaunchAgents/*hapi*.plist; do
+      label=$(/usr/libexec/PlistBuddy -c 'Print :Label' "$p" 2>/dev/null || true)
+      [[ -n "$label" ]] || continue
+      kind=; [[ "$label $p" == *hub* ]] && kind=hub; [[ "$label $p" == *runner* ]] && kind=runner
+      [[ -n "$kind" ]] || continue; [[ "$ROLE" == auto || "$ROLE" == "$kind" || "$ROLE" == hub+runner ]] || continue
+      launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 && ACTIVE_PLISTS+=("$p")
+    done
+  elif command -v systemctl >/dev/null; then
+    for pair in runner:hapi-runner.service hub:hapi-hub.service; do
+      kind=${pair%%:*}; unit=${pair#*:}; [[ "$ROLE" == auto || "$ROLE" == "$kind" || "$ROLE" == hub+runner ]] || continue
+      systemctl --user is-active --quiet "$unit" 2>/dev/null && ACTIVE_UNITS+=("$unit")
+    done
+  fi
+  [[ ${#ACTIVE_UNITS[@]} -gt 0 || ${#ACTIVE_PLISTS[@]} -gt 0 ]] || die 'no managed HAPI Hub/Runner found; configure QUIESCE_COMMAND and RESUME_COMMAND'
+  if [[ "$ROLE" == hub || "$ROLE" == hub+runner ]]; then printf '%s\n' "${ACTIVE_UNITS[@]}" "${ACTIVE_PLISTS[@]}" | grep -q hub || die 'requested Hub service was not active'; fi
+  if [[ "$ROLE" == runner || "$ROLE" == hub+runner ]]; then printf '%s\n' "${ACTIVE_UNITS[@]}" "${ACTIVE_PLISTS[@]}" | grep -q runner || die 'requested Runner service was not active'; fi
+}
+QUIESCED=0
+quiesce(){
+  MAINTENANCE_STARTED=1; ok=1
+  if [[ -n "$QUIESCE_COMMAND" ]]; then bash -lc "$QUIESCE_COMMAND" || ok=0
+  elif [[ ${#ACTIVE_UNITS[@]} -gt 0 ]]; then systemctl --user stop "${ACTIVE_UNITS[@]}" || ok=0
+  else for p in "${ACTIVE_PLISTS[@]}"; do launchctl bootout "gui/$(id -u)" "$p" || ok=0; done; fi
+  [[ "$ok" == 1 ]] || return 1; QUIESCED=1
+}
+resume(){
+  [[ "${MAINTENANCE_STARTED:-0}" == 1 ]] || return 0; ok=1
+  if [[ -n "$RESUME_COMMAND" ]]; then bash -lc "$RESUME_COMMAND" || ok=0
+  elif [[ ${#ACTIVE_UNITS[@]} -gt 0 ]]; then
+    for u in hapi-hub.service hapi-runner.service; do if [[ " ${ACTIVE_UNITS[*]} " == *" $u "* ]]; then systemctl --user start "$u" || ok=0; fi; done
+  else for p in "${ACTIVE_PLISTS[@]}"; do launchctl bootstrap "gui/$(id -u)" "$p" || ok=0; done; fi
+  [[ "$ok" == 1 ]] || return 1; QUIESCED=0; MAINTENANCE_STARTED=0
+}
+health(){ "$HAPI_BIN" --version >/dev/null && { [[ -z "$HEALTHCHECK_URL" ]] || curl -fsS --max-time 15 "$HEALTHCHECK_URL" >/dev/null; } && { [[ -z "$VERIFY_COMMAND" ]] || bash -lc "$VERIFY_COMMAND"; }; }
+services_healthy(){
+  if [[ -n "$RESUME_COMMAND" ]]; then [[ -n "$VERIFY_COMMAND" ]] || return 1; bash -lc "$VERIFY_COMMAND" || return 1; return 0; fi
+  if [[ ${#ACTIVE_UNITS[@]} -gt 0 ]]; then for u in "${ACTIVE_UNITS[@]}"; do systemctl --user is-active --quiet "$u" || return 1; done
+  else for p in "${ACTIVE_PLISTS[@]}"; do label=$(/usr/libexec/PlistBuddy -c 'Print :Label' "$p") || return 1; launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || return 1; done; fi
+}
+
+if [[ "$FORCE" != 1 ]]; then idle || { log 'busy/unknown task detected; skip'; exit 75; }; fi
+CURRENT=$(version || true); [[ -n "$CURRENT" ]] || die 'cannot read installed version'
+LATEST=$("$NPM_BIN" view "$PACKAGE@$CHANNEL" version --json 2>/dev/null | tr -d '"[:space:]'); [[ -n "$LATEST" ]] || die 'cannot resolve latest version'
+TAG_COMMIT=official-package
+if [[ "$UPDATE_MODE" == source ]]; then
+  command -v git >/dev/null && command -v "$BUN_BIN" >/dev/null || die 'source mode needs git and Bun'
+  CACHE="$ROOT/source"; [[ -d "$CACHE/.git" ]] || git clone "$SOURCE_REPO" "$CACHE"
+  [[ "$(git -C "$CACHE" remote get-url origin)" == "$SOURCE_REPO" ]] || die 'source cache origin differs from SOURCE_REPO'
+  git -C "$CACHE" fetch --force origin "refs/tags/v$LATEST:refs/hsu/tags/v$LATEST"
+  TAG_COMMIT=$(git -C "$CACHE" rev-parse "refs/hsu/tags/v$LATEST^{commit}") || die "cannot resolve source tag v$LATEST to commit"
+fi
+DESIRED_ID=$(python3 - "$UPDATE_MODE" "$LATEST" "$SOURCE_REPO" "$TAG_COMMIT" "$PATCH_DIR" <<'PY'
+import glob,hashlib,os,sys
+h=hashlib.sha256();
+for value in sys.argv[1:5]: h.update(value.encode()+b'\0')
+for p in sorted(glob.glob(os.path.expanduser(sys.argv[5]+'/*'))):
+    if os.path.isfile(p): h.update(os.path.basename(p).encode()+b'\0'+open(p,'rb').read())
+print(sys.argv[1]+':'+h.hexdigest())
+PY
+)
+LAST_ID=$(cat "$STATE/last-install-id" 2>/dev/null || true); NEEDS=0
+[[ "$CURRENT" != "$LATEST" ]] && NEEDS=1
+[[ "$UPDATE_MODE" == source && "$LAST_ID" != "$DESIRED_ID" ]] && NEEDS=1
+[[ "$UPDATE_MODE" == package && "$LAST_ID" == source:* ]] && NEEDS=1
+log "role=$ROLE mode=$UPDATE_MODE current=$CURRENT latest=$LATEST desired_changed=$([[ "$LAST_ID" == "$DESIRED_ID" ]] && echo no || echo yes)"
+[[ "$NEEDS" == 1 ]] || { log 'already at desired state'; exit 0; }
+
+INSTALL=("$NPM_BIN" install -g "$PACKAGE@$LATEST"); NPM_ROOT=$("$NPM_BIN" root -g)
+if [[ "$USE_SUDO" == 1 || ( "$USE_SUDO" == auto && ! -w "$NPM_ROOT" ) ]]; then INSTALL=(sudo -n "${INSTALL[@]}"); fi
+BUILT=; TREE_BACKUP=
+if [[ "$UPDATE_MODE" == source ]]; then
+  WT="$WORK/v${LATEST//./-}"; [[ ! -e "$WT" ]] || git -C "$CACHE" worktree remove --force "$WT"; git -C "$CACHE" worktree add --detach "$WT" "$TAG_COMMIT"
+  shopt -s nullglob; patches=("$PATCH_DIR"/*.patch)
+  for p in "${patches[@]}"; do if git -C "$WT" apply --check "$p"; then git -C "$WT" apply "$p"; elif git -C "$WT" apply --reverse --check "$p"; then log "patch already upstream: $(basename "$p")"; else die "patch conflicts with $TAG_COMMIT: $(basename "$p")"; fi; done
+  [[ ! -x "$PATCH_DIR/pre-build" ]] || "$PATCH_DIR/pre-build" "$WT"
+  (cd "$WT"; "$BUN_BIN" install --frozen-lockfile; "$BUN_BIN" run typecheck:hub; "$BUN_BIN" run typecheck:cli; "$BUN_BIN" run build:single-exe)
+  BUILT=$(find "$WT/cli/dist-exe" -type f -name hapi -perm -0100 | head -1); [[ -n "$BUILT" ]] || die 'built executable not found'
+fi
+[[ "$DRY" != 1 ]] || { log 'dry-run/preflight complete; installation untouched'; exit 0; }
+[[ -d "$NPM_ROOT/$PACKAGE" ]] || die "installed package tree missing: $NPM_ROOT/$PACKAGE"
+TREE_BACKUP="$STATE/hapi-tree-$CURRENT-$STAMP.tar.gz"; tar -czf "$TREE_BACKUP" -C "$NPM_ROOT" "$PACKAGE"
+discover_services
+if printf '%s\n' "${ACTIVE_UNITS[@]}" "${ACTIVE_PLISTS[@]}" | grep -q runner || [[ "$ROLE" == runner || "$ROLE" == hub+runner ]]; then [[ -n "$VERIFY_COMMAND" ]] || die 'Runner updates require VERIFY_COMMAND to prove reconnection'; fi
+if printf '%s\n' "${ACTIVE_UNITS[@]}" "${ACTIVE_PLISTS[@]}" | grep -q hub || [[ "$ROLE" == hub || "$ROLE" == hub+runner ]]; then [[ -n "$HEALTHCHECK_URL" ]] || die 'Hub updates require HEALTHCHECK_URL'; fi
+
+ROLLING_BACK=0; MUTATED=0; MAINTENANCE_STARTED=0
+rollback(){
+  ROLLING_BACK=1; trap - EXIT INT TERM HUP; log "rollback start: $CURRENT"
+  if [[ "$QUIESCED" != 1 ]]; then quiesce || { printf 'rollback_failed %s\n' "$STAMP" >"$STATE/ROLLBACK_FAILED"; log 'CRITICAL: cannot re-enter maintenance for rollback'; exit 70; }; fi
+  ok=1; s=(); [[ -w "$NPM_ROOT" ]] || s=(sudo -n)
+  "${s[@]}" rm -rf "$NPM_ROOT/$PACKAGE" || { log 'rollback remove failed'; ok=0; }
+  "${s[@]}" tar -xzf "$TREE_BACKUP" -C "$NPM_ROOT" || { log 'rollback extract failed'; ok=0; }
+  resume || { log 'rollback resume failed'; ok=0; }
+  [[ "$(version || true)" == "$CURRENT" ]] || { log "rollback version mismatch: $(version || true)"; ok=0; }
+  health || { log 'rollback health failed'; ok=0; }
+  services_healthy || { log 'rollback service verification failed'; ok=0; }
+  if [[ "$ok" != 1 ]]; then printf 'rollback_failed %s\n' "$STAMP" >"$STATE/ROLLBACK_FAILED"; log 'CRITICAL: rollback_failed'; exit 70; fi
+  log 'rollback verified'; exit 1
+}
+transaction_exit(){ rc=$?; trap - EXIT INT TERM HUP; if [[ "$ROLLING_BACK" == 0 && "$MUTATED" == 1 ]]; then rollback; elif [[ "${MAINTENANCE_STARTED:-0}" == 1 && "$ROLLING_BACK" == 0 ]]; then resume || rc=70; fi; exit "$rc"; }
+trap transaction_exit EXIT
+trap 'exit 130' INT TERM HUP
+quiesce || die 'failed to enter maintenance'
+if [[ "$FORCE" != 1 ]] && ! idle; then log 'task remained/became busy while drained; resume without update'; resume; exit 75; fi
+MUTATED=1; log "installing $LATEST"; "${INSTALL[@]}" || die 'npm installation failed'
+if [[ -n "$BUILT" ]]; then
+  DEST=$(find "$NPM_ROOT/$PACKAGE/node_modules" -type f -path '*/bin/hapi' -perm -0100 2>/dev/null | head -1); [[ -n "$DEST" ]] || die 'new platform executable missing'
+  s=(); [[ -w "$DEST" ]] || s=(sudo -n); "${s[@]}" cp "$BUILT" "$DEST" && "${s[@]}" chmod 755 "$DEST" || die 'platform executable replacement failed'
+fi
+resume || die 'service resume failed'
+[[ "$(version || true)" == "$LATEST" ]] && health && services_healthy || die 'post-update verification failed'
+MUTATED=0
+printf '%s\n' "$LATEST" >"$STATE/last-success-version"; log "updated $CURRENT -> $LATEST"
+printf '%s\n' "$DESIRED_ID" >"$STATE/last-install-id"
+"$ROOT/bin/prune-files.py" "$KEEP_LOGS" "$LOGS/*.log"
+"$ROOT/bin/prune-files.py" "$KEEP_BACKUPS" "$STATE/*.tar.gz" "$STATE/*.bak"

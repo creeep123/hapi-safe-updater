@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly timezone-aware gate for HAPI updater
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

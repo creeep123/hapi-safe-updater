@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PATH="${PATH:-}:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin"; export PATH
+ROOT="${HAPI_UPDATER_ROOT:-$HOME/.local/share/hapi-safe-updater}"
+CONFIG="${HAPI_UPDATER_CONFIG:-$HOME/.config/hapi-safe-updater/config.json}"
+rendered=$("$ROOT/bin/config-env.py" "$CONFIG") || exit $?
+eval "$rendered"
+exec "$ROOT/bin/schedule-gate.py" \
+  --state "$ROOT/state/schedule.json" \
+  --timezone "${HSU_SCHEDULE_TZ:-Asia/Shanghai}" \
+  --hour "${HSU_TARGET_HOUR:-4}" \
+  --days "${HSU_INTERVAL_DAYS:-2}" \
+  --catch-up-hours "${HSU_CATCH_UP_HOURS:-20}" \
+  -- "$ROOT/bin/hapi-safe-update"
