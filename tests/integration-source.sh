@@ -26,12 +26,42 @@ exit 0
 SH
 printf '%s\n' '#!/bin/sh' "echo 'old platform'" >"$T/npmroot/@twsxtd/hapi/node_modules/@twsxtd/hapi-test/bin/hapi"
 chmod +x "$T/fakebin/"* "$T/npmroot/@twsxtd/hapi/node_modules/@twsxtd/hapi-test/bin/hapi"
-cat >"$T/config.json" <<EOF
-{"HAPI_BIN":"$T/fakebin/hapi","NPM_BIN":"$T/fakebin/npm","BUN_BIN":"$T/fakebin/bun","HAPI_HOME":"$T/home/.hapi","USE_SUDO":"0","UPDATE_MODE":"source","SOURCE_REPO":"$T/src","PATCH_DIR":"$T/patches","QUIESCE_COMMAND":"true","RESUME_COMMAND":"true","VERIFY_COMMAND":"true"}
-EOF
+hash_file(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+PATCH_SHA=$(hash_file "$T/patches/010-demo.patch")
+PLATFORM_BIN="$T/npmroot/@twsxtd/hapi/node_modules/@twsxtd/hapi-test/bin/hapi"
+BASELINE_SHA=$(hash_file "$PLATFORM_BIN")
+python3 - "$T/config.json" "$T" "$PATCH_SHA" "$BASELINE_SHA" <<'PY'
+import json,sys
+out,t,patch_sha,baseline_sha=sys.argv[1:]
+config={
+ "HAPI_BIN":f"{t}/fakebin/hapi", "NPM_BIN":f"{t}/fakebin/npm", "BUN_BIN":f"{t}/fakebin/bun",
+ "HAPI_HOME":f"{t}/home/.hapi", "USE_SUDO":"0", "UPDATE_MODE":"source", "SOURCE_REPO":f"{t}/src",
+ "PATCH_DIR":f"{t}/patches", "REQUIRED_PATCH_FILE":f"{t}/patches/010-demo.patch",
+ "REQUIRED_PATCH_SHA256":patch_sha, "REQUIRE_CANDIDATE_VERIFY":1,
+ "CANDIDATE_VERIFY_COMMAND":"test -x \"$HSU_CANDIDATE_BIN\" && grep -q patched \"$HSU_WORKTREE/README.md\"",
+ "BINARY_INTEGRITY_PATH":f"{t}/npmroot/@twsxtd/hapi/node_modules/@twsxtd/hapi-test/bin/hapi",
+ "EXPECTED_CURRENT_BINARY_SHA256":baseline_sha,
+ "QUIESCE_COMMAND":"true", "RESUME_COMMAND":"true", "VERIFY_COMMAND":"true"
+}
+open(out,"w").write(json.dumps(config))
+PY
 cp -R "$REPO/bin" "$T/root/"; export FAKE_VERSION_FILE="$T/version" FAKE_NPM_ROOT="$T/npmroot" FAKE_BUN_LOG="$T/bun.log"
 PATH="$T/fakebin:$PATH" HAPI_UPDATER_ROOT="$T/root" HAPI_UPDATER_CONFIG="$T/config.json" "$REPO/bin/hapi-safe-update" --force
 test "$(cat "$T/version")" = 1.0.1
 grep -q patched "$T/root/worktrees/v1-0-1/README.md"
 grep -q 'hapi version: 1.0.1' "$T/npmroot/@twsxtd/hapi/node_modules/@twsxtd/hapi-test/bin/hapi"
+test "$(cat "$T/root/state/last-success-binary-sha256")" = "$(hash_file "$PLATFORM_BIN")"
+
+# Patch identity drift must fail before touching the installed version/tree.
+printf '1.0.0\n' >"$T/version"
+python3 - "$T/config.json" <<'PY'
+import json,sys
+p=sys.argv[1]; x=json.load(open(p)); x["REQUIRED_PATCH_SHA256"]="0"*64; open(p,"w").write(json.dumps(x))
+PY
+set +e
+PATH="$T/fakebin:$PATH" HAPI_UPDATER_ROOT="$T/root" HAPI_UPDATER_CONFIG="$T/config.json" "$REPO/bin/hapi-safe-update" --force
+rc=$?
+set -e
+test "$rc" != 0
+test "$(cat "$T/version")" = 1.0.0
 echo 'source patch build integration OK'

@@ -12,11 +12,20 @@ PACKAGE=$(get PACKAGE '@twsxtd/hapi'); CHANNEL=$(get CHANNEL latest); HAPI_BIN=$
 [[ "$PACKAGE" =~ ^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$ ]] || { echo "invalid npm PACKAGE=$PACKAGE" >&2; exit 2; }
 HAPI_HOME=$(get HAPI_HOME "$HOME/.hapi"); ROLE=$(get ROLE auto); UPDATE_MODE=$(get UPDATE_MODE package)
 SOURCE_REPO=$(get SOURCE_REPO https://github.com/tiann/hapi.git); PATCH_DIR=$(get PATCH_DIR "$HOME/.config/hapi-safe-updater/patches")
+REQUIRED_PATCH_FILE=$(get REQUIRED_PATCH_FILE ''); REQUIRED_PATCH_SHA256=$(get REQUIRED_PATCH_SHA256 '')
+REQUIRE_CANDIDATE_VERIFY=$(get REQUIRE_CANDIDATE_VERIFY 0); CANDIDATE_VERIFY_COMMAND=$(get CANDIDATE_VERIFY_COMMAND '')
+BINARY_INTEGRITY_PATH=$(get BINARY_INTEGRITY_PATH ''); EXPECTED_CURRENT_BINARY_SHA256=$(get EXPECTED_CURRENT_BINARY_SHA256 '')
 USE_SUDO=$(get USE_SUDO auto); HEALTHCHECK_URL=$(get HEALTHCHECK_URL ''); VERIFY_COMMAND=$(get VERIFY_COMMAND '')
 QUIESCE_COMMAND=$(get QUIESCE_COMMAND ''); RESUME_COMMAND=$(get RESUME_COMMAND ''); KEEP_LOGS=$(get KEEP_LOGS 30); KEEP_BACKUPS=$(get KEEP_BACKUPS 3)
 UNKNOWN_RECENT_MINUTES=$(get UNKNOWN_RECENT_MINUTES 15)
 [[ "$ROLE" =~ ^(auto|hub|runner|hub\+runner)$ ]] || { echo "invalid ROLE=$ROLE" >&2; exit 2; }
 [[ "$UPDATE_MODE" =~ ^(package|source)$ ]] || { echo "invalid UPDATE_MODE=$UPDATE_MODE" >&2; exit 2; }
+[[ "$REQUIRE_CANDIDATE_VERIFY" =~ ^(0|1)$ ]] || { echo 'REQUIRE_CANDIDATE_VERIFY must be 0 or 1' >&2; exit 2; }
+[[ -z "$REQUIRED_PATCH_SHA256" || "$REQUIRED_PATCH_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'REQUIRED_PATCH_SHA256 must be a SHA-256 hex digest' >&2; exit 2; }
+[[ -z "$EXPECTED_CURRENT_BINARY_SHA256" || "$EXPECTED_CURRENT_BINARY_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'EXPECTED_CURRENT_BINARY_SHA256 must be a SHA-256 hex digest' >&2; exit 2; }
+[[ -z "$REQUIRED_PATCH_FILE" && -z "$REQUIRED_PATCH_SHA256" || -n "$REQUIRED_PATCH_FILE" && -n "$REQUIRED_PATCH_SHA256" ]] || { echo 'REQUIRED_PATCH_FILE and REQUIRED_PATCH_SHA256 must be configured together' >&2; exit 2; }
+[[ "$REQUIRE_CANDIDATE_VERIFY" != 1 || -n "$CANDIDATE_VERIFY_COMMAND" ]] || { echo 'CANDIDATE_VERIFY_COMMAND is required when REQUIRE_CANDIDATE_VERIFY=1' >&2; exit 2; }
+[[ -z "$EXPECTED_CURRENT_BINARY_SHA256" || -n "$BINARY_INTEGRITY_PATH" ]] || { echo 'BINARY_INTEGRITY_PATH is required with EXPECTED_CURRENT_BINARY_SHA256' >&2; exit 2; }
 [[ -z "$QUIESCE_COMMAND" && -z "$RESUME_COMMAND" || -n "$QUIESCE_COMMAND" && -n "$RESUME_COMMAND" ]] || { echo 'QUIESCE_COMMAND and RESUME_COMMAND must be configured together' >&2; exit 2; }
 
 STATE="$ROOT/state"; LOGS="$ROOT/logs"; WORK="$ROOT/worktrees"; mkdir -p -m 700 "$STATE" "$LOGS" "$WORK"
@@ -24,6 +33,7 @@ STATE="$ROOT/state"; LOGS="$ROOT/logs"; WORK="$ROOT/worktrees"; mkdir -p -m 700 
 if [[ "${HAPI_LOCK_HELD:-0}" != 1 ]]; then exec env HAPI_LOCK_HELD=1 "$ROOT/bin/lock-run.py" "$STATE/update.lock" "$0" "$@"; fi
 STAMP=$(date '+%Y%m%d-%H%M%S'); LOG="$LOGS/$STAMP.log"; : >"$LOG"; chmod 600 "$LOG"; exec > >(tee -a "$LOG") 2>&1
 log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }; die(){ log "ERROR: $*"; exit 1; }
+sha256_file(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
 DRY=0; FORCE=0; for x in "$@"; do case "$x" in --dry-run) DRY=1;; --force) FORCE=1;; *) die "unknown argument $x";; esac; done
 version(){ "$HAPI_BIN" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?' | head -1; }
 idle(){ HAPI_HOME="$HAPI_HOME" "$ROOT/bin/hapi-idle-check.py" --unknown-recent-minutes "$UNKNOWN_RECENT_MINUTES"; }
@@ -84,6 +94,15 @@ if [[ "$UPDATE_MODE" == source ]]; then
   git -C "$CACHE" fetch --force origin "refs/tags/v$LATEST:refs/hsu/tags/v$LATEST"
   TAG_COMMIT=$(git -C "$CACHE" rev-parse "refs/hsu/tags/v$LATEST^{commit}") || die "cannot resolve source tag v$LATEST to commit"
 fi
+if [[ -n "$REQUIRED_PATCH_FILE" ]]; then
+  [[ "$UPDATE_MODE" == source ]] || die 'a required patch is only supported in source update mode'
+  REQUIRED_PATCH_FILE=${REQUIRED_PATCH_FILE/#\~/$HOME}; PATCH_DIR=${PATCH_DIR/#\~/$HOME}
+  [[ -f "$REQUIRED_PATCH_FILE" ]] || die "required patch missing: $REQUIRED_PATCH_FILE"
+  [[ "$(cd "$(dirname "$REQUIRED_PATCH_FILE")" && pwd -P)" == "$(cd "$PATCH_DIR" && pwd -P)" ]] || die 'required patch must be inside PATCH_DIR so it is actually applied'
+  actual_patch_sha=$(sha256_file "$REQUIRED_PATCH_FILE")
+  [[ "$(printf '%s' "$actual_patch_sha" | tr 'A-F' 'a-f')" == "$(printf '%s' "$REQUIRED_PATCH_SHA256" | tr 'A-F' 'a-f')" ]] || die "required patch SHA-256 mismatch: $(basename "$REQUIRED_PATCH_FILE")"
+  log "required patch verified: $(basename "$REQUIRED_PATCH_FILE") sha256=$actual_patch_sha"
+fi
 DESIRED_ID=$(python3 - "$UPDATE_MODE" "$LATEST" "$SOURCE_REPO" "$TAG_COMMIT" "$PATCH_DIR" <<'PY'
 import glob,hashlib,os,sys
 h=hashlib.sha256();
@@ -111,22 +130,53 @@ if [[ "$UPDATE_MODE" == source ]]; then
   (cd "$WT"; "$BUN_BIN" install --frozen-lockfile; "$BUN_BIN" run typecheck:hub; "$BUN_BIN" run typecheck:cli; "$BUN_BIN" run build:single-exe)
   BUILT=$(find "$WT/cli/dist-exe" -type f -name hapi -perm -0100 | head -1); [[ -n "$BUILT" ]] || die 'built executable not found'
 fi
+if [[ -n "$CANDIDATE_VERIFY_COMMAND" ]]; then
+  [[ -n "$BUILT" && -n "${WT:-}" ]] || die 'candidate verification requires a source-built candidate'
+  log 'running isolated candidate verification before production mutation'
+  HSU_CANDIDATE_BIN="$BUILT" HSU_WORKTREE="$WT" HSU_TARGET_VERSION="$LATEST" \
+    bash -lc "$CANDIDATE_VERIFY_COMMAND" || die 'candidate verification failed; production remains untouched'
+  log 'isolated candidate verification passed'
+elif [[ "$REQUIRE_CANDIDATE_VERIFY" == 1 ]]; then
+  die 'candidate verification is required but not configured'
+fi
 [[ "$DRY" != 1 ]] || { log 'dry-run/preflight complete; installation untouched'; exit 0; }
 [[ -d "$NPM_ROOT/$PACKAGE" ]] || die "installed package tree missing: $NPM_ROOT/$PACKAGE"
-TREE_BACKUP="$STATE/hapi-tree-$CURRENT-$STAMP.tar.gz"; tar -czf "$TREE_BACKUP" -C "$NPM_ROOT" "$PACKAGE"
+# Prefix scoped npm paths with ./ so BSD tar does not interpret a leading @ as
+# an archive-file list operand.
+TREE_BACKUP="$STATE/hapi-tree-$CURRENT-$STAMP.tar.gz"; tar -czf "$TREE_BACKUP" -C "$NPM_ROOT" "./$PACKAGE"
+PRE_UPDATE_BINARY_SHA=
+if [[ -n "$BINARY_INTEGRITY_PATH" ]]; then
+  BINARY_INTEGRITY_PATH=${BINARY_INTEGRITY_PATH/#\~/$HOME}
+  [[ -f "$BINARY_INTEGRITY_PATH" ]] || die "binary integrity path missing: $BINARY_INTEGRITY_PATH"
+  PRE_UPDATE_BINARY_SHA=$(sha256_file "$BINARY_INTEGRITY_PATH")
+  tracked_sha=$(cat "$STATE/last-success-binary-sha256" 2>/dev/null || true)
+  expected_sha=${tracked_sha:-$EXPECTED_CURRENT_BINARY_SHA256}
+  [[ -z "$expected_sha" || "$(printf '%s' "$PRE_UPDATE_BINARY_SHA" | tr 'A-F' 'a-f')" == "$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')" ]] || die 'installed binary differs from the recorded production baseline; refusing to overwrite it'
+  log "production binary baseline captured: sha256=$PRE_UPDATE_BINARY_SHA"
+fi
 discover_services
-if printf '%s\n' "${ACTIVE_UNITS[@]}" "${ACTIVE_PLISTS[@]}" | grep -q runner || [[ "$ROLE" == runner || "$ROLE" == hub+runner ]]; then [[ -n "$VERIFY_COMMAND" ]] || die 'Runner updates require VERIFY_COMMAND to prove reconnection'; fi
-if printf '%s\n' "${ACTIVE_UNITS[@]}" "${ACTIVE_PLISTS[@]}" | grep -q hub || [[ "$ROLE" == hub || "$ROLE" == hub+runner ]]; then [[ -n "$HEALTHCHECK_URL" ]] || die 'Hub updates require HEALTHCHECK_URL'; fi
+service_inventory=$(printf '%s\n' "${ACTIVE_UNITS[*]-}" "${ACTIVE_PLISTS[*]-}")
+if printf '%s\n' "$service_inventory" | grep -q runner || [[ "$ROLE" == runner || "$ROLE" == hub+runner ]]; then [[ -n "$VERIFY_COMMAND" ]] || die 'Runner updates require VERIFY_COMMAND to prove reconnection'; fi
+if printf '%s\n' "$service_inventory" | grep -q hub || [[ "$ROLE" == hub || "$ROLE" == hub+runner ]]; then [[ -n "$HEALTHCHECK_URL" ]] || die 'Hub updates require HEALTHCHECK_URL'; fi
 
 ROLLING_BACK=0; MUTATED=0; MAINTENANCE_STARTED=0
 rollback(){
   ROLLING_BACK=1; trap - EXIT INT TERM HUP; log "rollback start: $CURRENT"
   if [[ "$QUIESCED" != 1 ]]; then quiesce || { printf 'rollback_failed %s\n' "$STAMP" >"$STATE/ROLLBACK_FAILED"; log 'CRITICAL: cannot re-enter maintenance for rollback'; exit 70; }; fi
-  ok=1; s=(); [[ -w "$NPM_ROOT" ]] || s=(sudo -n)
-  "${s[@]}" rm -rf "$NPM_ROOT/$PACKAGE" || { log 'rollback remove failed'; ok=0; }
-  "${s[@]}" tar -xzf "$TREE_BACKUP" -C "$NPM_ROOT" || { log 'rollback extract failed'; ok=0; }
+  ok=1
+  if [[ -w "$NPM_ROOT" ]]; then
+    rm -rf "$NPM_ROOT/$PACKAGE" || { log 'rollback remove failed'; ok=0; }
+    tar -xzf "$TREE_BACKUP" -C "$NPM_ROOT" || { log 'rollback extract failed'; ok=0; }
+  else
+    sudo -n rm -rf "$NPM_ROOT/$PACKAGE" || { log 'rollback remove failed'; ok=0; }
+    sudo -n tar -xzf "$TREE_BACKUP" -C "$NPM_ROOT" || { log 'rollback extract failed'; ok=0; }
+  fi
   resume || { log 'rollback resume failed'; ok=0; }
   [[ "$(version || true)" == "$CURRENT" ]] || { log "rollback version mismatch: $(version || true)"; ok=0; }
+  if [[ -n "$PRE_UPDATE_BINARY_SHA" ]]; then
+    restored_sha=$(sha256_file "$BINARY_INTEGRITY_PATH" 2>/dev/null || true)
+    [[ "$restored_sha" == "$PRE_UPDATE_BINARY_SHA" ]] || { log 'rollback binary SHA-256 mismatch'; ok=0; }
+  fi
   health || { log 'rollback health failed'; ok=0; }
   services_healthy || { log 'rollback service verification failed'; ok=0; }
   if [[ "$ok" != 1 ]]; then printf 'rollback_failed %s\n' "$STAMP" >"$STATE/ROLLBACK_FAILED"; log 'CRITICAL: rollback_failed'; exit 70; fi
@@ -140,12 +190,16 @@ if [[ "$FORCE" != 1 ]] && ! idle; then log 'task remained/became busy while drai
 MUTATED=1; log "installing $LATEST"; "${INSTALL[@]}" || die 'npm installation failed'
 if [[ -n "$BUILT" ]]; then
   DEST=$(find "$NPM_ROOT/$PACKAGE/node_modules" -type f -path '*/bin/hapi' -perm -0100 2>/dev/null | head -1); [[ -n "$DEST" ]] || die 'new platform executable missing'
-  s=(); [[ -w "$DEST" ]] || s=(sudo -n); "${s[@]}" cp "$BUILT" "$DEST" && "${s[@]}" chmod 755 "$DEST" || die 'platform executable replacement failed'
+  if [[ -w "$DEST" ]]; then cp "$BUILT" "$DEST" && chmod 755 "$DEST" || die 'platform executable replacement failed'
+  else sudo -n cp "$BUILT" "$DEST" && sudo -n chmod 755 "$DEST" || die 'platform executable replacement failed'; fi
 fi
 resume || die 'service resume failed'
 [[ "$(version || true)" == "$LATEST" ]] && health && services_healthy || die 'post-update verification failed'
 MUTATED=0
 printf '%s\n' "$LATEST" >"$STATE/last-success-version"; log "updated $CURRENT -> $LATEST"
 printf '%s\n' "$DESIRED_ID" >"$STATE/last-install-id"
+if [[ -n "$BINARY_INTEGRITY_PATH" ]]; then
+  sha256_file "$BINARY_INTEGRITY_PATH" >"$STATE/last-success-binary-sha256"
+fi
 "$ROOT/bin/prune-files.py" "$KEEP_LOGS" "$LOGS/*.log"
 "$ROOT/bin/prune-files.py" "$KEEP_BACKUPS" "$STATE/*.tar.gz" "$STATE/*.bak"
