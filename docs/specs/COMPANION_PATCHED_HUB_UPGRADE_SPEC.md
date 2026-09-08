@@ -32,7 +32,8 @@ All checks run before service quiesce or production-tree mutation:
 5. the candidate harness uses an isolated temporary database/configuration and asserts:
    - `/health` succeeds;
    - unauthenticated `/companion/sessions` returns exactly `401`;
-   - registration response contains the expected device credential JSON fields and types;
+   - registration produces an ephemeral device credential with the expected fields and types;
+   - authenticated `/companion/sessions` matches the minimal catalog contract: `capabilities.turnDuration` is boolean and every session projects only the allowed ID/title/optional machine/update/activity fields;
    - authenticated `/companion/events` begins with the `connected` SSE frame;
    - publishing an isolated test event and ACKing its `{seq,eventId}` succeeds and advances monotonically;
 6. ephemeral credentials are held only in process memory or a mode-`0600` temporary file removed by the harness trap, never printed.
@@ -47,6 +48,7 @@ Any failure exits before production mutation.
 - Require post-switch `/health`, Companion verification command, and Runner reconnection.
 - On failure, restore the complete previous tree offline and require the restored binary SHA-256 to equal the pre-update value.
 - A failed rollback creates `ROLLBACK_FAILED` and freezes later scheduled updates.
+- Because the Companion database migration is forward-only, production enablement also requires configured and drilled database snapshot/restore commands; binary-tree rollback alone is not enough after migration.
 
 ## Non-goals
 

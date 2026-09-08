@@ -21,7 +21,7 @@ Before replacing production, the updater must:
 1. resolve the exact upstream release and apply the required Companion patch;
 2. reject a missing patch, checksum drift, or apply conflict;
 3. build and test an isolated candidate;
-4. verify `/health`, unauthenticated `/companion/sessions` returns `401`, device registration JSON contract, `/companion/events` first `connected` frame, and ACK behavior without saving or logging credentials;
+4. verify `/health`, unauthenticated `/companion/sessions` returns `401`, the authenticated device session-catalog JSON contract, `/companion/events` first `connected` frame, and ACK behavior without saving or logging credentials;
 5. verify the rollback snapshot and current production binary identity;
 6. after switching, verify Hub health and Runner recovery;
 7. restore the complete previous installation tree and verify its original binary SHA-256 if any post-switch check fails.
@@ -37,3 +37,5 @@ Before replacing production, the updater must:
 ## Open decision
 
 Choose the VM's isolated candidate-Hub harness: ephemeral JWT/device registration against a temporary database is preferred, but its exact start command, port allocation, and database path must be validated on the VM before enabling unattended upgrades.
+
+Also choose and test the VM database snapshot/restore commands. The Companion schema migration is forward-only, so restoring only the old executable tree is not a sufficient rollback once a migration has run.

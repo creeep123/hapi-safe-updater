@@ -10,7 +10,8 @@ Status: in progress — repository gates implemented; VM candidate harness and r
 - [x] Capture and verify deployed-binary integrity through rollback.
 - [x] Add configuration validation and integration tests for the new gates.
 - [x] Verify the pinned Companion patch applies to upstream `v0.29.0` (`240ab2f0535eadbb0a3f51b287c7ed04f405f34a`) with an isolated Git index.
-- [ ] Build the VM-specific isolated Hub harness for `/health`, `401`, device JSON, SSE `connected`, and ACK.
+- [ ] Build the VM-specific isolated Hub harness for `/health`, `401`, authenticated device session-catalog JSON, SSE `connected`, and ACK.
+- [ ] Add and drill VM database snapshot/restore commands for the forward-only Companion schema migration.
 - [ ] Configure the VM to source the patch from an audited HAPI Companion checkout.
 - [ ] Run dry-run and destructive rollback drill against a disposable VM/staging copy.
 - [ ] Enable the profile in production only after the drill passes.
