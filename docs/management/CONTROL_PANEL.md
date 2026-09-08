@@ -2,6 +2,7 @@
 
 ## Current state
 
+- Fresh-user and repository-link handoffs enter through `docs/agents/NEW_INSTALL.md`, which connects this updater to HAPI Companion without merging project ownership.
 - The updater supports source builds, patch replay, offline npm-tree rollback, Hub health checks, and Runner reconnection checks.
 - The HAPI Companion production constraint was **not** previously represented as a first-class gate.
 - Required-patch identity, pre-mutation candidate verification, and binary-integrity rollback checks are now implemented on the working branch; production adoption remains a separate rollout task.

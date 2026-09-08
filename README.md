@@ -4,7 +4,11 @@
 
 ## 给 Agent 的一句话
 
-> 克隆本仓库，先读 README 和 `config.example.json`，运行 `./install.sh`；根据本机是 Hub、Runner 或两者调整配置，执行一次 `hapi-safe-update --dry-run`，确认后再手动实跑。不要复制其他机器的 token。
+> 请为我的 Mac 和自有服务器配置 HAPI 完成提醒及后续安全升级。先阅读本仓库的 AGENTS.md、README.md 和 `docs/agents/NEW_INSTALL.md`，并沿文档链接检查 HAPI Companion。识别已有安装、目标服务器和访问方式；安装 Mac Companion，验证服务器使用兼容补丁的 Hub，再配置 updater 的补丁 pin、候选验收和回滚。不要输出凭据，不要用无补丁的官方包覆盖 Hub；逐项报告实际验证结果和未完成项。
+
+**全新 Mac + 自有服务器：必须先读 [新环境安装引导](docs/agents/NEW_INSTALL.md)。** 本项目负责安全升级；[HAPI Companion](https://github.com/creeep123/hapi-companion) 负责 Mac 提醒应用、Hub 权威补丁和接口契约。只安装本 updater 不会产生提醒，只安装 Companion 也不等于已经获得安全自动升级。
+
+下面原有的 updater 安装命令只适用于已经确认 Hub 类型、补丁责任和回滚边界的环境，不能替代新环境端到端引导。
 
 ## 支持场景
 
