@@ -9,6 +9,7 @@ Status: in progress — repository gates implemented; VM candidate harness and r
 - [x] Add a mandatory isolated candidate verification hook before production mutation.
 - [x] Capture and verify deployed-binary integrity through rollback.
 - [x] Add configuration validation and integration tests for the new gates.
+- [x] Verify the pinned Companion patch applies to upstream `v0.29.0` (`240ab2f0535eadbb0a3f51b287c7ed04f405f34a`) with an isolated Git index.
 - [ ] Build the VM-specific isolated Hub harness for `/health`, `401`, device JSON, SSE `connected`, and ACK.
 - [ ] Configure the VM to source the patch from an audited HAPI Companion checkout.
 - [ ] Run dry-run and destructive rollback drill against a disposable VM/staging copy.
@@ -27,3 +28,5 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 bash tests/integration-source.sh
 bash tests/integration-package.sh
 ```
+
+Current branch evidence (2026-09-08): 13 Python tests passed; source-mode required-patch/candidate/integrity integration passed; package install and rollback integration passed; `git diff --check` passed. No production service or credential was touched.
