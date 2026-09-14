@@ -75,6 +75,8 @@ $HOME/.local/share/hapi-safe-updater/bin/hapi-safe-update --dry-run
 
 把补丁放进 `PATCH_DIR/*.patch`。每个新版本都会从对应 tag 创建干净 worktree、应用补丁、typecheck、构建，再切换。冲突时在安装前停止；若补丁已被上游合并，则自动识别并跳过。详见 [`patches/README.md`](patches/README.md)。
 
+默认依赖安装使用 `BUN_INSTALL_MODE=frozen`。对于 Bun 会因跨平台 lockfile 规范化而拒绝、但权威 lockfile 本身仍需保持不变的已验收基线，可显式配置 `"BUN_INSTALL_MODE": "no-save"`。该模式仍使用仓库内 lockfile，禁止写入 package manifests，并在安装后复核 `bun.lock` SHA-256；任何变化都会在生产停止前失败。不要用普通可写的 `bun install` 绕过门禁。
+
 ### 强制补丁与候选 Hub 门禁
 
 生产 Hub 依赖某个补丁时，不要只依靠“目录里碰巧有一个 patch”。应同时锁定补丁文件及 SHA-256，并要求在覆盖生产前验证隔离候选：
@@ -93,6 +95,8 @@ $HOME/.local/share/hapi-safe-updater/bin/hapi-safe-update --dry-run
 ```
 
 候选命令在生产服务停止、npm 安装树变化之前运行，可读取 `HSU_CANDIDATE_BIN`、`HSU_WORKTREE`、`HSU_TARGET_VERSION`。它必须自行使用隔离端口、临时数据库和临时凭据，且不得输出或持久化凭据。首次纳管核对配置中的生产 SHA；成功后由 updater state 跟踪下一版 SHA。回滚必须恢复并核对升级前的原始 SHA。
+
+隔离候选的标准验证器是 `bin/verify-companion-candidate.py`；通过 `CANDIDATE_VERIFY_COMMAND` 调用。它使用临时目录、临时数据库和仅驻留内存的凭据验证 health、401、设备注册、目录 JSON、SSE connected 首帧、隔离事件及 ACK，结束后清除候选状态。
 
 HAPI Companion patched Hub 的完整强制契约见 [`docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md`](docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md)，当前不可变 Companion commit、HAPI baseline 与补丁 SHA pin 见 [`docs/pins/companion-patched-hub.json`](docs/pins/companion-patched-hub.json)。生产配置中的 `REQUIRED_PATCH_SHA256` 必须与该记录一致。Hub 与 embedded Web assets 必须作为一个完整构建一起部署和回滚。
 

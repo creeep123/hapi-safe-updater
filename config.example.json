@@ -4,6 +4,7 @@
   "HAPI_BIN": "hapi",
   "NPM_BIN": "npm",
   "BUN_BIN": "bun",
+  "BUN_INSTALL_MODE": "frozen",
   "HAPI_HOME": "~/.hapi",
   "ROLE": "auto",
   "UPDATE_MODE": "package",

@@ -24,19 +24,20 @@ All checks run before service quiesce or production-tree mutation:
 
 1. required patch exists inside `PATCH_DIR` and matches its pinned SHA-256;
 2. patch applies cleanly, or is provably already upstream via reverse apply-check;
-3. Hub and CLI typechecks pass and the single executable builds;
-4. the configured isolated-candidate command receives only:
+3. dependency installation consumes the committed lockfile without modifying it (`frozen`, or explicitly pinned `no-save` with pre/post lock hash and manifest checks);
+4. Hub and CLI typechecks pass and the single executable builds;
+5. the configured isolated-candidate command receives only:
    - `HSU_CANDIDATE_BIN`,
    - `HSU_WORKTREE`,
    - `HSU_TARGET_VERSION`;
-5. the candidate harness uses an isolated temporary database/configuration and asserts:
+6. the candidate harness uses an isolated temporary database/configuration and asserts:
    - `/health` succeeds;
    - unauthenticated `/companion/sessions` returns exactly `401`;
    - registration produces an ephemeral device credential with the expected fields and types;
    - authenticated `/companion/sessions` matches the minimal catalog contract: `capabilities.turnDuration` is boolean and every session projects only the allowed ID/title/optional machine/update/activity fields;
    - authenticated `/companion/events` begins with the `connected` SSE frame;
    - publishing an isolated test event and ACKing its `{seq,eventId}` succeeds and advances monotonically;
-6. ephemeral credentials are held only in process memory or a mode-`0600` temporary file removed by the harness trap, never printed.
+7. ephemeral credentials are held only in process memory or a mode-`0600` temporary file removed by the harness trap, never printed.
 
 Any failure exits before production mutation.
 

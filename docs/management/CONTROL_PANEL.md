@@ -5,7 +5,8 @@
 - Fresh-user and repository-link handoffs enter through `docs/agents/NEW_INSTALL.md`, which connects this updater to HAPI Companion without merging project ownership.
 - The updater supports source builds, patch replay, offline npm-tree rollback, Hub health checks, and Runner reconnection checks.
 - The HAPI Companion production constraint was **not** previously represented as a first-class gate.
-- Required-patch identity, pre-mutation candidate verification, and binary-integrity rollback checks are now implemented on the working branch; production adoption remains a separate rollout task.
+- Required-patch identity, immutable dependency-install policy, isolated Companion candidate verification, and binary-integrity rollback checks are implemented on the default branch; production adoption remains a separate rollout task.
+- Bun lockfile compatibility is handled explicitly: the V0.5 pin uses `no-save`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged. It never falls back to a mutable install.
 
 ## Production profile: VM HAPI Hub
 
@@ -42,6 +43,6 @@ Before replacing production, the updater must:
 
 ## Open decision
 
-Choose the VM's isolated candidate-Hub harness: ephemeral JWT/device registration against a temporary database is preferred, but its exact start command, port allocation, and database path must be validated on the VM before enabling unattended upgrades.
+The portable isolated candidate-Hub harness is implemented at `bin/verify-companion-candidate.py` and has passed on the Mac-built candidate. Its candidate binary path, ephemeral port, temporary database, device registration, catalog, SSE and ACK flow still must be exercised on the VM before enabling unattended upgrades.
 
 Also choose and test the VM database snapshot/restore commands. The Companion schema migration is forward-only, so restoring only the old executable tree is not a sufficient rollback once a migration has run.

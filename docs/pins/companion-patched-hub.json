@@ -8,6 +8,7 @@
   "hapiRepository": "https://github.com/tiann/hapi",
   "hapiBaselineCommit": "d3d4fd1706564782e9a58b917df4e0677f65051f",
   "hapiBaselineDescription": "v0.29.0-2-gd3d4fd17",
+  "bunInstallMode": "no-save",
   "contractChanges": "none",
   "databaseSchemaChanges": "none",
   "rollback": "Restore the prior complete Hub build with its embedded web assets; no database rollback is required for this patch transition."

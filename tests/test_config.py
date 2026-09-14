@@ -27,4 +27,13 @@ class ConfigTests(unittest.TestCase):
             self.assertIn("HSU_REQUIRED_PATCH_SHA256="+"a"*64,out)
             self.assertIn("HSU_REQUIRE_CANDIDATE_VERIFY=1",out)
             self.assertIn("HSU_EXPECTED_CURRENT_BINARY_SHA256="+"b"*64,out)
+    def test_bun_install_mode_is_strict(self):
+        with tempfile.TemporaryDirectory() as t:
+            p=Path(t)/"c.json"
+            p.write_text(json.dumps({"BUN_INSTALL_MODE":"no-save"}))
+            out=subprocess.check_output([sys.executable,str(SCRIPT),str(p)],text=True)
+            self.assertIn("HSU_BUN_INSTALL_MODE=no-save",out)
+            p.write_text(json.dumps({"BUN_INSTALL_MODE":"mutable"}))
+            self.assertNotEqual(subprocess.run([sys.executable,str(SCRIPT),str(p)],capture_output=True).returncode,0)
+
 if __name__=="__main__": unittest.main()

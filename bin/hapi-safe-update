@@ -8,7 +8,7 @@ CONFIG="${HAPI_UPDATER_CONFIG:-$HOME/.config/hapi-safe-updater/config.json}"
 rendered=$("$ROOT/bin/config-env.py" "$CONFIG") || exit $?
 eval "$rendered"
 get(){ local k=$1 d=$2 c="HSU_$1"; printf '%s' "${!k:-${!c:-$d}}"; }
-PACKAGE=$(get PACKAGE '@twsxtd/hapi'); CHANNEL=$(get CHANNEL latest); HAPI_BIN=$(get HAPI_BIN hapi); NPM_BIN=$(get NPM_BIN npm); BUN_BIN=$(get BUN_BIN bun)
+PACKAGE=$(get PACKAGE '@twsxtd/hapi'); CHANNEL=$(get CHANNEL latest); HAPI_BIN=$(get HAPI_BIN hapi); NPM_BIN=$(get NPM_BIN npm); BUN_BIN=$(get BUN_BIN bun); BUN_INSTALL_MODE=$(get BUN_INSTALL_MODE frozen)
 [[ "$PACKAGE" =~ ^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$ ]] || { echo "invalid npm PACKAGE=$PACKAGE" >&2; exit 2; }
 HAPI_HOME=$(get HAPI_HOME "$HOME/.hapi"); ROLE=$(get ROLE auto); UPDATE_MODE=$(get UPDATE_MODE package)
 SOURCE_REPO=$(get SOURCE_REPO https://github.com/tiann/hapi.git); PATCH_DIR=$(get PATCH_DIR "$HOME/.config/hapi-safe-updater/patches")
@@ -20,6 +20,7 @@ QUIESCE_COMMAND=$(get QUIESCE_COMMAND ''); RESUME_COMMAND=$(get RESUME_COMMAND '
 UNKNOWN_RECENT_MINUTES=$(get UNKNOWN_RECENT_MINUTES 15)
 [[ "$ROLE" =~ ^(auto|hub|runner|hub\+runner)$ ]] || { echo "invalid ROLE=$ROLE" >&2; exit 2; }
 [[ "$UPDATE_MODE" =~ ^(package|source)$ ]] || { echo "invalid UPDATE_MODE=$UPDATE_MODE" >&2; exit 2; }
+[[ "$BUN_INSTALL_MODE" =~ ^(frozen|no-save)$ ]] || { echo "invalid BUN_INSTALL_MODE=$BUN_INSTALL_MODE" >&2; exit 2; }
 [[ "$REQUIRE_CANDIDATE_VERIFY" =~ ^(0|1)$ ]] || { echo 'REQUIRE_CANDIDATE_VERIFY must be 0 or 1' >&2; exit 2; }
 [[ -z "$REQUIRED_PATCH_SHA256" || "$REQUIRED_PATCH_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'REQUIRED_PATCH_SHA256 must be a SHA-256 hex digest' >&2; exit 2; }
 [[ -z "$EXPECTED_CURRENT_BINARY_SHA256" || "$EXPECTED_CURRENT_BINARY_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'EXPECTED_CURRENT_BINARY_SHA256 must be a SHA-256 hex digest' >&2; exit 2; }
@@ -127,7 +128,23 @@ if [[ "$UPDATE_MODE" == source ]]; then
   shopt -s nullglob; patches=("$PATCH_DIR"/*.patch)
   for p in "${patches[@]}"; do if git -C "$WT" apply --check "$p"; then git -C "$WT" apply "$p"; elif git -C "$WT" apply --reverse --check "$p"; then log "patch already upstream: $(basename "$p")"; else die "patch conflicts with $TAG_COMMIT: $(basename "$p")"; fi; done
   [[ ! -x "$PATCH_DIR/pre-build" ]] || "$PATCH_DIR/pre-build" "$WT"
-  (cd "$WT"; "$BUN_BIN" install --frozen-lockfile; "$BUN_BIN" run typecheck:hub; "$BUN_BIN" run typecheck:cli; "$BUN_BIN" run build:single-exe)
+  (
+    cd "$WT"
+    lock_before=$(sha256_file bun.lock)
+    if [[ "$BUN_INSTALL_MODE" == frozen ]]; then
+      "$BUN_BIN" install --frozen-lockfile
+    else
+      # Some committed cross-platform Bun lockfiles are rewritten by newer Bun
+      # even when the dependency graph is usable. --no-save consumes the pinned
+      # lock without mutating it; the explicit digest check keeps this fail-closed.
+      "$BUN_BIN" install --no-save
+    fi
+    [[ "$(sha256_file bun.lock)" == "$lock_before" ]] || die 'bun install changed the committed lockfile'
+    [[ -z "$(git status --porcelain -- '**/package.json' bun.lock)" ]] || die 'bun install changed a dependency manifest'
+    "$BUN_BIN" run typecheck:hub
+    "$BUN_BIN" run typecheck:cli
+    "$BUN_BIN" run build:single-exe
+  )
   BUILT=$(find "$WT/cli/dist-exe" -type f -name hapi -perm -0100 | head -1); [[ -n "$BUILT" ]] || die 'built executable not found'
 fi
 if [[ -n "$CANDIDATE_VERIFY_COMMAND" ]]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render a JSON object as safely shell-quoted HSU_* variables."""
 import json, os, shlex, sys
-ALLOWED={"PACKAGE","CHANNEL","HAPI_BIN","NPM_BIN","BUN_BIN","HAPI_HOME","ROLE","UPDATE_MODE","SOURCE_REPO","PATCH_DIR","REQUIRED_PATCH_FILE","REQUIRED_PATCH_SHA256","REQUIRE_CANDIDATE_VERIFY","CANDIDATE_VERIFY_COMMAND","BINARY_INTEGRITY_PATH","EXPECTED_CURRENT_BINARY_SHA256","SCHEDULE_TZ","TARGET_HOUR","INTERVAL_DAYS","CATCH_UP_HOURS","UNKNOWN_RECENT_MINUTES","HEALTHCHECK_URL","VERIFY_COMMAND","QUIESCE_COMMAND","RESUME_COMMAND","USE_SUDO","KEEP_LOGS","KEEP_BACKUPS"}
+ALLOWED={"PACKAGE","CHANNEL","HAPI_BIN","NPM_BIN","BUN_BIN","BUN_INSTALL_MODE","HAPI_HOME","ROLE","UPDATE_MODE","SOURCE_REPO","PATCH_DIR","REQUIRED_PATCH_FILE","REQUIRED_PATCH_SHA256","REQUIRE_CANDIDATE_VERIFY","CANDIDATE_VERIFY_COMMAND","BINARY_INTEGRITY_PATH","EXPECTED_CURRENT_BINARY_SHA256","SCHEDULE_TZ","TARGET_HOUR","INTERVAL_DAYS","CATCH_UP_HOURS","UNKNOWN_RECENT_MINUTES","HEALTHCHECK_URL","VERIFY_COMMAND","QUIESCE_COMMAND","RESUME_COMMAND","USE_SUDO","KEEP_LOGS","KEEP_BACKUPS"}
 p=os.path.expanduser(sys.argv[1])
 try: data=json.load(open(p))
 except FileNotFoundError: data={}
@@ -10,6 +10,7 @@ for key,lo,hi in (("TARGET_HOUR",0,23),("INTERVAL_DAYS",1,365),("CATCH_UP_HOURS"
     if key in data and (not isinstance(data[key],int) or isinstance(data[key],bool) or not lo <= data[key] <= hi): raise SystemExit(f"invalid {key}: expected integer {lo}..{hi}")
 if data.get("ROLE","auto") not in ("auto","hub","runner","hub+runner"): raise SystemExit("invalid ROLE")
 if data.get("UPDATE_MODE","package") not in ("package","source"): raise SystemExit("invalid UPDATE_MODE")
+if data.get("BUN_INSTALL_MODE","frozen") not in ("frozen","no-save"): raise SystemExit("invalid BUN_INSTALL_MODE")
 if str(data.get("USE_SUDO","auto")) not in ("auto","0","1","False","True"): raise SystemExit("invalid USE_SUDO")
 for key,value in data.items():
     if not key.replace("_","").isalnum() or not key.isupper(): raise SystemExit(f"invalid config key: {key}")

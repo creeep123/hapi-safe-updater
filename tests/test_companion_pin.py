@@ -19,6 +19,7 @@ class CompanionPinTests(unittest.TestCase):
         self.assertEqual(pin["patchPath"], "integrations/hapi/hapi-companion.patch")
         self.assertEqual(pin["contractChanges"], "none")
         self.assertEqual(pin["databaseSchemaChanges"], "none")
+        self.assertEqual(pin["bunInstallMode"], "no-save")
 
         panel = (ROOT / "docs" / "management" / "CONTROL_PANEL.md").read_text()
         spec = (ROOT / "docs" / "specs" / "COMPANION_PATCHED_HUB_UPGRADE_SPEC.md").read_text()
