@@ -9,4 +9,12 @@ Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 CPUQuota=150%
+# Keep source builds from competing with production HAPI until global OOM.
+# Percentage limits scale with the host; exceeding them kills only this oneshot.
+MemoryAccounting=true
+MemoryHigh=40%
+MemoryMax=50%
+MemorySwapMax=10%
+OOMPolicy=stop
+OOMScoreAdjust=500
 TimeoutStartSec=45min

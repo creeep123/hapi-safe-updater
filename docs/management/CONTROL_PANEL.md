@@ -7,6 +7,7 @@
 - The HAPI Companion production constraint was **not** previously represented as a first-class gate.
 - Required-patch identity, immutable dependency-install policy, isolated Companion candidate verification, and binary-integrity rollback checks are implemented on the default branch; production adoption remains a separate rollout task.
 - Bun lockfile compatibility is handled explicitly: the V0.5 pin uses `no-save`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged. It never falls back to a mutable install.
+- Linux scheduled candidate builds run in a separate updater service with percentage-based memory/swap limits and `OOMPolicy=stop`; resource exhaustion must kill the candidate build, not production Hub/Runner.
 
 ## Production profile: VM HAPI Hub
 

@@ -51,7 +51,7 @@ $HOME/.local/share/hapi-safe-updater/bin/hapi-safe-update --dry-run
 ~/.config/hapi-safe-updater/config.json
 ```
 
-默认每两个北京时间日历日于 04:00 左右检查。systemd/launchd 每小时只唤醒一次轻量级时间门禁；04:00 后当天还有补跑窗口，睡眠或离线恢复后不会立即错过整轮。忙碌时一小时后再试，失败时六小时后再试。常驻资源占用为 0，平时一次唤醒通常不足一秒。
+默认每两个北京时间日历日于 04:00 左右检查。systemd/launchd 每小时只唤醒一次轻量级时间门禁；04:00 后当天还有补跑窗口，睡眠或离线恢复后不会立即错过整轮。忙碌时一小时后再试，失败时六小时后再试。常驻资源占用为 0，平时一次唤醒通常不足一秒。Linux updater oneshot 另有独立 cgroup 内存保护（`MemoryHigh=40%`、`MemoryMax=50%`、`MemorySwapMax=10%`、`OOMPolicy=stop`）；资源不足时牺牲候选构建并保持生产服务，而不是把构建压力转嫁给 Hub/Runner。
 
 ## 两种更新模式
 
