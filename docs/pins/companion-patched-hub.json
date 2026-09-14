@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "companionRepository": "https://github.com/creeep123/hapi-companion",
+  "companionCommit": "b4033aa30f39efdfdd5fa9bf1263e826d03a9416",
+  "patchPath": "integrations/hapi/hapi-companion.patch",
+  "patchSha256": "399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf",
+  "previousPatchSha256": "2a96be323c0d837793d32fd20fffc44efd6828e6a9263da5ebffcc5cf79e95bd",
+  "hapiRepository": "https://github.com/tiann/hapi",
+  "hapiBaselineCommit": "d3d4fd1706564782e9a58b917df4e0677f65051f",
+  "hapiBaselineDescription": "v0.29.0-2-gd3d4fd17",
+  "contractChanges": "none",
+  "databaseSchemaChanges": "none",
+  "rollback": "Restore the prior complete Hub build with its embedded web assets; no database rollback is required for this patch transition."
+}

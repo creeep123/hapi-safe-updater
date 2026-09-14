@@ -16,7 +16,7 @@ Upgrade a production HAPI Hub that carries the HAPI Companion integration withou
 
 The authoritative patch is maintained by HAPI Companion at
 `/Users/mayuming/develop/hapi-companion/integrations/hapi/hapi-companion.patch`.
-It must be transferred to the VM through an audited source checkout or equivalent integrity-preserving step; credentials must not accompany it.
+The current immutable identity is recorded in [`docs/pins/companion-patched-hub.json`](../pins/companion-patched-hub.json). The configured `REQUIRED_PATCH_SHA256` must equal that record before candidate construction. It must be transferred to the VM through an audited source checkout or equivalent integrity-preserving step; credentials must not accompany it.
 
 ## Pre-mutation acceptance criteria
 
@@ -42,7 +42,7 @@ Any failure exits before production mutation.
 
 ## Switch and rollback acceptance criteria
 
-- Capture the complete installed npm tree and current binary SHA-256 before quiescing.
+- Capture the complete installed npm tree (including embedded Web assets) and current binary SHA-256 before quiescing.
 - The first managed run must match the configured production baseline SHA-256.
 - Resume Hub then Runner in the configured order.
 - Require post-switch `/health`, Companion verification command, and Runner reconnection.

@@ -5,7 +5,8 @@
 1. `docs/agents/NEW_INSTALL.md` is the required entry point for a fresh Mac + self-hosted server installation or a repository-link handoff.
 2. `docs/management/CONTROL_PANEL.md` defines project status and decisions.
 3. `docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md` defines the mandatory production gate for a Hub carrying HAPI Companion.
-4. `.scratch/companion-patched-hub-upgrade/ISSUE.md` tracks the executable rollout work.
+4. `docs/pins/companion-patched-hub.json` records the current immutable Companion patch pin.
+5. `.scratch/companion-patched-hub-upgrade/ISSUE.md` tracks the executable rollout work.
 
 ## Hard boundaries
 

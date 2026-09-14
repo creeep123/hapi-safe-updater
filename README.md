@@ -94,7 +94,7 @@ $HOME/.local/share/hapi-safe-updater/bin/hapi-safe-update --dry-run
 
 候选命令在生产服务停止、npm 安装树变化之前运行，可读取 `HSU_CANDIDATE_BIN`、`HSU_WORKTREE`、`HSU_TARGET_VERSION`。它必须自行使用隔离端口、临时数据库和临时凭据，且不得输出或持久化凭据。首次纳管核对配置中的生产 SHA；成功后由 updater state 跟踪下一版 SHA。回滚必须恢复并核对升级前的原始 SHA。
 
-HAPI Companion patched Hub 的完整强制契约见 [`docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md`](docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md)。
+HAPI Companion patched Hub 的完整强制契约见 [`docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md`](docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md)，当前不可变 Companion commit、HAPI baseline 与补丁 SHA pin 见 [`docs/pins/companion-patched-hub.json`](docs/pins/companion-patched-hub.json)。生产配置中的 `REQUIRED_PATCH_SHA256` 必须与该记录一致。Hub 与 embedded Web assets 必须作为一个完整构建一起部署和回滚。
 
 ## 配置 Hub / Runner
 

@@ -12,7 +12,12 @@
 - The VM Hub is a maintained patched build, not an unmodified upstream package.
 - Recorded production binary SHA-256: `324a88f0d5a9e11cbb401c845cfb5da1a8387380126ff752f64ba7b9231ad917`.
 - Authoritative patch source: `/Users/mayuming/develop/hapi-companion/integrations/hapi/hapi-companion.patch`.
-- Current authoritative patch SHA-256: `2a96be323c0d837793d32fd20fffc44efd6828e6a9263da5ebffcc5cf79e95bd`.
+- Current immutable Companion commit: `b4033aa30f39` (PR #16).
+- Target HAPI baseline: `d3d4fd1706564782e9a58b917df4e0677f65051f` (`v0.29.0-2-gd3d4fd17`; 0.29.0 reference).
+- Current authoritative patch SHA-256: `399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf` (previous: `2a96be323c0d837793d32fd20fffc44efd6828e6a9263da5ebffcc5cf79e95bd`).
+- Machine-readable pin: [`docs/pins/companion-patched-hub.json`](../pins/companion-patched-hub.json).
+- V0.5 delta is limited to embedded PWA launch behavior (`focus-existing` → `navigate-existing`) and exact same-origin `/sessions/<UUID>` routing. Hub API, Relay contract, and database schema/migrations are unchanged.
+- This transition must replace/restore the complete Hub build together with its embedded web assets; it has no database rollback step.
 - The patch remains owned by HAPI Companion. The updater owns replay, validation, switching, and rollback.
 
 ## Mandatory release gate
