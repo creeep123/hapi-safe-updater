@@ -5,6 +5,35 @@ ROOT="${HAPI_UPDATER_ROOT:-$HOME/.local/share/hapi-safe-updater}"
 CONFIG="${HAPI_UPDATER_CONFIG:-$HOME/.config/hapi-safe-updater/config.json}"
 rendered=$("$ROOT/bin/config-env.py" "$CONFIG") || exit $?
 eval "$rendered"
+
+# macOS runtime smoke-check runs hourly, before the slower update schedule gate.
+# It only detects and reports startup breakage; it never repairs packages.
+if [[ "$(uname -s)" == Darwin ]]; then
+  codex_bin=$(command -v codex || true)
+  marker="$ROOT/state/codex-runtime-unhealthy"
+  runtime_ok=0
+  if [[ -n "$codex_bin" ]] && /usr/bin/python3 - "$codex_bin" <<'PYCODE'
+import subprocess, sys
+try:
+    subprocess.run([sys.argv[1], "--version"], stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=10, check=True)
+except Exception:
+    raise SystemExit(1)
+PYCODE
+  then runtime_ok=1; fi
+  if [[ "$runtime_ok" != 1 ]]; then
+    if [[ ! -f "$marker" ]]; then
+      mkdir -p -m 700 "$ROOT/state"; : >"$marker"; chmod 600 "$marker"
+      osascript -e 'display notification "Codex 无法启动，安全更新已暂停" with title "HAPI 运行环境异常"' >/dev/null 2>&1 || true
+    fi
+    echo 'Codex runtime check failed; update skipped' >&2
+    exit 78
+  elif [[ -f "$marker" ]]; then
+    rm -f "$marker"
+    osascript -e 'display notification "Codex 已恢复正常" with title "HAPI 运行环境恢复"' >/dev/null 2>&1 || true
+  fi
+fi
 exec "$ROOT/bin/schedule-gate.py" \
   --state "$ROOT/state/schedule.json" \
   --timezone "${HSU_SCHEDULE_TZ:-Asia/Shanghai}" \
