@@ -102,6 +102,20 @@ Forward-only schema upgrades must additionally set `REQUIRE_DATABASE_ROLLBACK=1`
 
 HAPI Companion patched Hub 的完整强制契约见 [`docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md`](docs/specs/COMPANION_PATCHED_HUB_UPGRADE_SPEC.md)，当前不可变 Companion commit、HAPI baseline 与补丁 SHA pin 见 [`docs/pins/companion-patched-hub.json`](docs/pins/companion-patched-hub.json)。生产配置中的 `REQUIRED_PATCH_SHA256` 必须与该记录一致。Hub 与 embedded Web assets 必须作为一个完整构建一起部署和回滚。
 
+目标版本会迁移数据库时，必须启用数据库回滚门禁。updater 会在停服并完成二次空闲检查后创建和验证备份；安装或后置验收失败时，先恢复旧程序与升级前数据库，再启动旧服务：
+
+```json
+{
+  "REQUIRE_DATABASE_ROLLBACK": 1,
+  "DATABASE_PATH": "/path/to/hapi.sqlite",
+  "DATABASE_BACKUP_COMMAND": "sqlite3 \"$HSU_DATABASE_PATH\" '.backup '\"$HSU_DATABASE_BACKUP_PATH\"",
+  "DATABASE_RESTORE_COMMAND": "cp \"$HSU_DATABASE_BACKUP_PATH\" \"$HSU_DATABASE_PATH\"",
+  "DATABASE_VERIFY_COMMAND": "sqlite3 \"$HSU_DATABASE_VERIFY_PATH\" 'PRAGMA integrity_check' | grep -qx ok"
+}
+```
+
+命令只通过路径变量传参，不应包含或输出凭据。对 schema v27 升级，此门禁不可关闭；旧 v26 Hub 只能在升级前数据库恢复完成后启动。生产路径和命令须先在一次性数据库副本上演练。
+
 ## 配置 Hub / Runner
 
 通常保持 `ROLE=auto` 即可。服务名符合 `hapi-hub.service`、`hapi-runner.service` 或 launchd label/path 含 hapi + hub/runner 时会自动重启。非标准部署请显式设置：
@@ -141,6 +155,9 @@ Runner-only Mac 示例：
 # 手动执行，仍遵守忙闲门禁
 ~/.local/share/hapi-safe-updater/bin/hapi-safe-update
 
+# 分阶段验证 Runner（只记录阶段、状态码和计数，不记录 token/响应正文）
+~/.local/share/hapi-safe-updater/bin/verify-runner-smoke.py --spawn --expected-version "$(hapi --version | awk '{print $NF}')"
+
 # 紧急人工维护才可绕过门禁
 ~/.local/share/hapi-safe-updater/bin/hapi-safe-update --force
 
@@ -161,6 +178,8 @@ launchctl print gui/$(id -u)/io.hapi.safe-updater
 5. 切换前会快照完整旧 npm 安装树（含平台 optional dependency）；回滚不依赖 registry 网络。恢复后会再次核对版本、服务和自定义健康验证，失败写入 `state/ROLLBACK_FAILED` 并以 70 退出，绝不伪称成功。
 6. 不提交、不搬运 HAPI credentials/token；日志只记录状态和脱敏事件名。
 7. `--force` 只允许人工执行，不用于定时任务。
+
+Runner 烟测依次报告 `preflight`、`auth`、`machine`、`models`、`spawn`、`message`、`reply`。失败日志只包含稳定的原因代码，不包含认证请求、Bearer header、响应正文、machine/session ID 或消息内容；烟测创建的会话会在退出时尽力归档。
 
 若存在 `state/ROLLBACK_FAILED`，后续定时升级会永久 fail-closed。请人工恢复并完成版本、Hub 健康和 Runner 重连验证后，才可删除该标记。
 
