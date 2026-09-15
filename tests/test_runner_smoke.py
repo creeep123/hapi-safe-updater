@@ -15,6 +15,7 @@ SECRET = "must-not-appear-in-output"
 class Handler(BaseHTTPRequestHandler):
     failed_stage = None
     session_reads = 0
+    transient_machine_failures = 0
 
     def log_message(self, *_args):
         pass
@@ -33,7 +34,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/auth":
             self.reply(401 if self.failed_stage == "auth" else 200, {"token": SECRET})
         elif self.path == "/api/machines/machine-1/spawn":
-            self.reply(500 if self.failed_stage == "spawn" else 200, {"sessionId": "session-1", "debug": SECRET})
+            if self.failed_stage == "spawn-rejected":
+                self.reply(200, {"type": "error", "code": "runner_busy", "message": SECRET})
+            else:
+                self.reply(500 if self.failed_stage == "spawn" else 200, {"sessionId": "session-1", "debug": SECRET})
         elif self.path == "/api/sessions/session-1/messages":
             self.server.local_id = body.get("localId", "")
             self.reply(500 if self.failed_stage == "message" else 200, {"ok": True})
@@ -44,13 +48,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/machines":
+            if self.transient_machine_failures:
+                Handler.transient_machine_failures -= 1
+                self.reply(503, {"debug": SECRET})
+                return
             active = self.failed_stage != "machine"
             self.reply(200, {"machines": [{"id": "machine-1", "active": active, "debug": SECRET}]})
         elif self.path == "/api/machines/machine-1/codex-models":
             models = [] if self.failed_stage == "models" else [{"id": "gpt-test"}]
             self.reply(200, {"success": True, "models": models, "debug": SECRET})
         elif self.path == "/api/sessions/session-1":
-            self.reply(200, {"active": True, "thinking": False, "metadata": {"flavor": "codex"}})
+            self.reply(200, {"session": {"active": True, "thinking": False, "metadata": {"flavor": "codex"}}})
         elif self.path.startswith("/api/sessions/session-1/messages?"):
             messages = [{"localId": self.server.local_id, "seq": 1, "content": {"role": "user"}}]
             if self.failed_stage != "reply":
@@ -63,6 +71,7 @@ class Handler(BaseHTTPRequestHandler):
 class RunnerSmokeTest(unittest.TestCase):
     def setUp(self):
         Handler.failed_stage = None
+        Handler.transient_machine_failures = 0
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.local_id = ""
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -99,6 +108,12 @@ class RunnerSmokeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for stage in ("auth", "machine", "models", "spawn", "message", "reply"):
             self.assertIn(f"stage={stage} status=pass", result.stdout)
+            self.assertNotIn(SECRET, result.stdout + result.stderr)
+
+    def test_spawn_rejection_reports_only_safe_code(self):
+        result = self.run_smoke("spawn-rejected")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("spawn_rejected_runner_busy", result.stdout)
         self.assertNotIn(SECRET, result.stdout + result.stderr)
 
     def test_reports_exact_failure_stage_without_response_body(self):
@@ -108,6 +123,13 @@ class RunnerSmokeTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(f"stage={stage} status=fail", result.stdout)
                 self.assertNotIn(SECRET, result.stdout + result.stderr)
+
+    def test_retries_a_transient_server_failure_without_leaking_body(self):
+        Handler.transient_machine_failures = 1
+        result = self.run_smoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("stage=machine status=pass", result.stdout)
+        self.assertNotIn(SECRET, result.stdout + result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

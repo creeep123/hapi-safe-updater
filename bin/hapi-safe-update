@@ -129,8 +129,10 @@ if [[ "$USE_SUDO" == 1 || ( "$USE_SUDO" == auto && ! -w "$NPM_ROOT" ) ]]; then I
 BUILT=; TREE_BACKUP=
 if [[ "$UPDATE_MODE" == source ]]; then
   WT="$WORK/v${LATEST//./-}"; [[ ! -e "$WT" ]] || git -C "$CACHE" worktree remove --force "$WT"; git -C "$CACHE" worktree add --detach "$WT" "$TAG_COMMIT"
-  shopt -s nullglob; patches=("$PATCH_DIR"/*.patch)
-  for p in "${patches[@]}"; do if git -C "$WT" apply --check "$p"; then git -C "$WT" apply "$p"; elif git -C "$WT" apply --reverse --check "$p"; then log "patch already upstream: $(basename "$p")"; else die "patch conflicts with $TAG_COMMIT: $(basename "$p")"; fi; done
+  for p in "$PATCH_DIR"/*.patch; do
+    [[ -e "$p" ]] || continue
+    if git -C "$WT" apply --check "$p"; then git -C "$WT" apply "$p"; elif git -C "$WT" apply --reverse --check "$p"; then log "patch already upstream: $(basename "$p")"; else die "patch conflicts with $TAG_COMMIT: $(basename "$p")"; fi
+  done
   [[ ! -x "$PATCH_DIR/pre-build" ]] || "$PATCH_DIR/pre-build" "$WT"
   (
     cd "$WT"

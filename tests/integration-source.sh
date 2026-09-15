@@ -63,11 +63,21 @@ set -e
 test "$rc" != 0
 test "$(cat "$T/version")" = 1.0.0
 
+# An empty patch directory is valid for an unpatched source build, including
+# macOS Bash 3.2 with nounset enabled.
+python3 - "$T/config.json" <<'PY'
+import json,sys
+p=sys.argv[1]; x=json.load(open(p)); x["REQUIRED_PATCH_FILE"]=""; x["REQUIRED_PATCH_SHA256"]=""; x["CANDIDATE_VERIFY_COMMAND"]="test -x \"$HSU_CANDIDATE_BIN\""; open(p,"w").write(json.dumps(x))
+PY
+mv "$T/patches/010-demo.patch" "$T/010-demo.patch.saved"
+PATH="$T/fakebin:$PATH" HAPI_UPDATER_ROOT="$T/root" HAPI_UPDATER_CONFIG="$T/config.json" "$REPO/bin/hapi-safe-update" --dry-run --force
+mv "$T/010-demo.patch.saved" "$T/patches/010-demo.patch"
+
 # Patch identity drift must fail before touching the installed version/tree.
 printf '1.0.0\n' >"$T/version"
 python3 - "$T/config.json" <<'PY'
 import json,sys
-p=sys.argv[1]; x=json.load(open(p)); x["REQUIRED_PATCH_SHA256"]="0"*64; open(p,"w").write(json.dumps(x))
+p=sys.argv[1]; x=json.load(open(p)); x["REQUIRED_PATCH_FILE"]=x["PATCH_DIR"]+"/010-demo.patch"; x["REQUIRED_PATCH_SHA256"]="0"*64; open(p,"w").write(json.dumps(x))
 PY
 set +e
 PATH="$T/fakebin:$PATH" HAPI_UPDATER_ROOT="$T/root" HAPI_UPDATER_CONFIG="$T/config.json" "$REPO/bin/hapi-safe-update" --force

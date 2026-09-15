@@ -8,6 +8,16 @@
 - Required-patch identity, immutable dependency-install policy, isolated Companion candidate verification, and binary-integrity rollback checks are implemented on the default branch; production adoption remains a separate rollout task.
 - The HAPI v0.30.7 pin uses `bun install --frozen-lockfile`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged.
 - Linux scheduled candidate builds run in a separate updater service with percentage-based memory/swap limits and `OOMPolicy=stop`; resource exhaustion must kill the candidate build, not production Hub/Runner.
+- The repository now includes a credential-safe staged Runner smoke verifier (`bin/verify-runner-smoke.py`) covering auth, active-machine lookup, Codex models, spawn, message acceptance, and agent reply. Its isolated HTTP-contract tests assert that secrets and response bodies never enter output.
+
+## Mac Runner handoff (2026-09-15)
+
+- The live Mac scheduler has migrated to `io.hapi.safe-updater` under `~/.local/share/hapi-safe-updater`. The environment-B legacy label `cn.yangdexiong.hapi-auto-update` is unloaded and its plist, scripts, logs, and HAPI 0.29.0 rollback tree remain preserved for recovery; it is no longer in `~/Library/LaunchAgents` and therefore cannot race the new scheduler after login.
+- The Mac profile uses unpatched source mode for the Runner only. It verifies the immutable upstream tag, frozen dependency install, Hub/CLI typechecks, executable build and candidate version before any future switch. The VM Companion-patched Hub remains a separate source-mode rollout and is not managed by this Mac profile.
+- The reliable 2026-09-15 failure timeline is: candidate 0.30.6 Runner started at 04:21:22, machine registration at 04:21:23, `[API MACHINE] Connected to bot` at 04:21:24, and SIGTERM/rollback at 04:22:34. No `List Codex models request` or smoke session spawn appeared in the candidate log. The exact failing assertion remains unknown: evidence only bounds it to auth, machines, or models HTTP/assertion before spawn, and must not be narrowed further from the old log.
+- An isolated upstream `v0.30.7` (`0239edf38e2da653d662f31039e24ccea04c7837`) Mac candidate passed dependency install, CLI/Hub typechecks, Codex model tests, tunwg acquisition, executable build, and version verification. Production was not replaced or restarted.
+- `agent acp` (`executable="agent"`, `args=["acp"]`) is Cursor's ACP backend in this upstream release. The current Mac has no `agent` executable in either the interactive or Runner launchd PATH. After registration and `apiMachine.connect()`, Runner schedules Cursor model pre-warming in the background and catches its failure; this ENOENT is a diagnosable compatibility warning, not an established cause of the Codex smoke failure.
+- The installed staged verifier now reports preflight/auth/machine/models/spawn/message/reply separately, retries transient 5xx/network failures without logging response bodies, and accepts the v0.30.7 wrapped session response. A real 0.30.7 Runner smoke passed every stage. The source candidate dry-run also passed without mutating the installed HAPI tree. Future post-switch failure remains fail-closed and invokes the updater rollback path.
 
 ## Production profile: VM HAPI Hub
 

@@ -52,10 +52,16 @@ def request_json(url, method="GET", headers=None, body=None, timeout=30):
 
 
 def checked_request(stage, *args, **kwargs):
-    try:
-        return request_json(*args, **kwargs)
-    except (OSError, TimeoutError, urllib.error.URLError):
-        raise SmokeFailure(stage, "request_failed") from None
+    for attempt in range(4):
+        try:
+            status, payload = request_json(*args, **kwargs)
+            if status < 500 or attempt == 3:
+                return status, payload
+        except (OSError, TimeoutError, urllib.error.URLError):
+            if attempt == 3:
+                raise SmokeFailure(stage, "request_failed") from None
+        time.sleep(2)
+    raise SmokeFailure(stage, "request_failed")
 
 
 def main():
@@ -130,11 +136,16 @@ def main():
         )
         session_id = (payload.get("sessionId") or payload.get("id") or "") if isinstance(payload, dict) else ""
         require(status == 200, stage, f"unexpected_http_{status}")
+        if isinstance(payload, dict) and payload.get("type") == "error":
+            code = payload.get("code")
+            safe_code = code if isinstance(code, str) and code.replace("_", "").isalnum() else "unspecified"
+            raise SmokeFailure(stage, f"spawn_rejected_{safe_code}")
         require(session_id, stage, "invalid_spawn_payload")
         deadline = time.monotonic() + 30
         ready = False
         while time.monotonic() < deadline:
-            session_status, session = checked_request(stage, f"{api_url}/api/sessions/{session_id}", headers=auth, timeout=10)
+            session_status, session_payload = checked_request(stage, f"{api_url}/api/sessions/{session_id}", headers=auth, timeout=10)
+            session = session_payload.get("session", session_payload) if isinstance(session_payload, dict) else None
             if session_status == 200 and isinstance(session, dict) and session.get("active") is True and session.get("metadata", {}).get("flavor") == "codex":
                 ready = True
                 break
@@ -157,7 +168,8 @@ def main():
         replied = False
         complete = False
         while time.monotonic() < deadline:
-            _, session = checked_request(stage, f"{api_url}/api/sessions/{session_id}", headers=auth, timeout=10)
+            _, session_payload = checked_request(stage, f"{api_url}/api/sessions/{session_id}", headers=auth, timeout=10)
+            session = session_payload.get("session", session_payload) if isinstance(session_payload, dict) else None
             _, message_page = checked_request(stage, f"{api_url}/api/sessions/{session_id}/messages?limit=50", headers=auth, timeout=10)
             messages = message_page.get("messages", []) if isinstance(message_page, dict) else []
             user_seqs = [m.get("seq") for m in messages if isinstance(m, dict) and m.get("localId") == local_id and m.get("content", {}).get("role") == "user" and isinstance(m.get("seq"), int)]
@@ -181,7 +193,14 @@ def main():
     finally:
         if session_id and jwt and api_url:
             try:
-                request_json(api_url + f"/api/sessions/{session_id}/archive", "POST", {"Authorization": "Bearer " + jwt}, timeout=20)
+                cleanup_status, _ = request_json(
+                    api_url + f"/api/sessions/{session_id}/archive",
+                    "POST",
+                    {"Authorization": "Bearer " + jwt},
+                    timeout=90,
+                )
+                if cleanup_status != 200:
+                    report("cleanup", "warn", reason=f"unexpected_http_{cleanup_status}")
             except Exception:
                 report("cleanup", "warn", reason="archive_failed")
 
