@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "companionRepository": "https://github.com/creeep123/hapi-companion",
-  "companionCommit": "b4033aa30f39efdfdd5fa9bf1263e826d03a9416",
+  "companionCommit": "940cb28a5642a5d536ea972cadf2aac25be27a72",
   "patchPath": "integrations/hapi/hapi-companion.patch",
-  "patchSha256": "399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf",
-  "previousPatchSha256": "2a96be323c0d837793d32fd20fffc44efd6828e6a9263da5ebffcc5cf79e95bd",
+  "patchSha256": "f7492b0fb2614f0963c473007b1c3910eab80aa04bb2ab44dc96613fa8c5dd5b",
+  "previousPatchSha256": "399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf",
   "hapiRepository": "https://github.com/tiann/hapi",
-  "hapiBaselineCommit": "d3d4fd1706564782e9a58b917df4e0677f65051f",
-  "hapiBaselineDescription": "v0.29.0-2-gd3d4fd17",
-  "bunInstallMode": "no-save",
-  "contractChanges": "none",
-  "databaseSchemaChanges": "none",
-  "rollback": "Restore the prior complete Hub build with its embedded web assets; no database rollback is required for this patch transition."
+  "hapiBaselineCommit": "0239edf38e2da653d662f31039e24ccea04c7837",
+  "hapiBaselineDescription": "v0.30.7",
+  "bunInstallMode": "frozen",
+  "contractChanges": "Contract v1 adds the additive input-request event kind.",
+  "databaseSchemaChanges": "Forward-only v26 to v27 reconciliation migration.",
+  "rollback": "Restore both the prior complete Hub build and its pre-upgrade v26 database backup; never start the older v26 binary on a v27 database."
 }

@@ -17,9 +17,9 @@ class CompanionPinTests(unittest.TestCase):
         self.assertRegex(pin["previousPatchSha256"], r"^[0-9a-f]{64}$")
         self.assertNotEqual(pin["patchSha256"], pin["previousPatchSha256"])
         self.assertEqual(pin["patchPath"], "integrations/hapi/hapi-companion.patch")
-        self.assertEqual(pin["contractChanges"], "none")
-        self.assertEqual(pin["databaseSchemaChanges"], "none")
-        self.assertEqual(pin["bunInstallMode"], "no-save")
+        self.assertIn("input-request", pin["contractChanges"])
+        self.assertIn("v26 to v27", pin["databaseSchemaChanges"])
+        self.assertEqual(pin["bunInstallMode"], "frozen")
 
         panel = (ROOT / "docs" / "management" / "CONTROL_PANEL.md").read_text()
         spec = (ROOT / "docs" / "specs" / "COMPANION_PATCHED_HUB_UPGRADE_SPEC.md").read_text()

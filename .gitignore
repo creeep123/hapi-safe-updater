@@ -4,3 +4,4 @@
 __pycache__/
 state/
 worktrees/
+.scratch/v0307-upgrade/

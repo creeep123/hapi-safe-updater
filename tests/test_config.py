@@ -22,11 +22,16 @@ class ConfigTests(unittest.TestCase):
                 "CANDIDATE_VERIFY_COMMAND":"verify-candidate",
                 "BINARY_INTEGRITY_PATH":"/opt/hapi/bin/hapi",
                 "EXPECTED_CURRENT_BINARY_SHA256":"b"*64,
+                "REQUIRE_DATABASE_ROLLBACK":1,
+                "DATABASE_SNAPSHOT_COMMAND":"snapshot-db",
+                "DATABASE_RESTORE_COMMAND":"restore-db",
             }))
             out=subprocess.check_output([sys.executable,str(SCRIPT),str(p)],text=True)
             self.assertIn("HSU_REQUIRED_PATCH_SHA256="+"a"*64,out)
             self.assertIn("HSU_REQUIRE_CANDIDATE_VERIFY=1",out)
             self.assertIn("HSU_EXPECTED_CURRENT_BINARY_SHA256="+"b"*64,out)
+            self.assertIn("HSU_REQUIRE_DATABASE_ROLLBACK=1",out)
+            self.assertIn("HSU_DATABASE_RESTORE_COMMAND=restore-db",out)
     def test_bun_install_mode_is_strict(self):
         with tempfile.TemporaryDirectory() as t:
             p=Path(t)/"c.json"

@@ -94,6 +94,8 @@ $HOME/.local/share/hapi-safe-updater/bin/hapi-safe-update --dry-run
 }
 ```
 
+Forward-only schema upgrades must additionally set `REQUIRE_DATABASE_ROLLBACK=1` with paired `DATABASE_SNAPSHOT_COMMAND` and `DATABASE_RESTORE_COMMAND`. The snapshot command runs and must verify its backup before maintenance; rollback restores that database while services are stopped and before the old binary resumes.
+
 候选命令在生产服务停止、npm 安装树变化之前运行，可读取 `HSU_CANDIDATE_BIN`、`HSU_WORKTREE`、`HSU_TARGET_VERSION`。它必须自行使用隔离端口、临时数据库和临时凭据，且不得输出或持久化凭据。首次纳管核对配置中的生产 SHA；成功后由 updater state 跟踪下一版 SHA。回滚必须恢复并核对升级前的原始 SHA。
 
 隔离候选的标准验证器是 `bin/verify-companion-candidate.py`；通过 `CANDIDATE_VERIFY_COMMAND` 调用。它使用临时目录、临时数据库和仅驻留内存的凭据验证 health、401、设备注册、目录 JSON、SSE connected 首帧、隔离事件及 ACK，结束后清除候选状态。

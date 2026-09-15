@@ -6,7 +6,7 @@
 - The updater supports source builds, patch replay, offline npm-tree rollback, Hub health checks, and Runner reconnection checks.
 - The HAPI Companion production constraint was **not** previously represented as a first-class gate.
 - Required-patch identity, immutable dependency-install policy, isolated Companion candidate verification, and binary-integrity rollback checks are implemented on the default branch; production adoption remains a separate rollout task.
-- Bun lockfile compatibility is handled explicitly: the V0.5 pin uses `no-save`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged. It never falls back to a mutable install.
+- The HAPI v0.30.7 pin uses `bun install --frozen-lockfile`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged.
 - Linux scheduled candidate builds run in a separate updater service with percentage-based memory/swap limits and `OOMPolicy=stop`; resource exhaustion must kill the candidate build, not production Hub/Runner.
 
 ## Production profile: VM HAPI Hub
@@ -14,12 +14,12 @@
 - The VM Hub is a maintained patched build, not an unmodified upstream package.
 - Recorded production binary SHA-256: `324a88f0d5a9e11cbb401c845cfb5da1a8387380126ff752f64ba7b9231ad917`.
 - Authoritative patch source: `/Users/mayuming/develop/hapi-companion/integrations/hapi/hapi-companion.patch`.
-- Current immutable Companion commit: `b4033aa30f39` (PR #16).
-- Target HAPI baseline: `d3d4fd1706564782e9a58b917df4e0677f65051f` (`v0.29.0-2-gd3d4fd17`; 0.29.0 reference).
-- Current authoritative patch SHA-256: `399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf` (previous: `2a96be323c0d837793d32fd20fffc44efd6828e6a9263da5ebffcc5cf79e95bd`).
+- Current immutable Companion commit: `940cb28a5642a5d536ea972cadf2aac25be27a72` (PR #23 merge commit).
+- Target HAPI baseline: `0239edf38e2da653d662f31039e24ccea04c7837` (`v0.30.7`).
+- Current authoritative patch SHA-256: `f7492b0fb2614f0963c473007b1c3910eab80aa04bb2ab44dc96613fa8c5dd5b` (previous: `399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf`).
 - Machine-readable pin: [`docs/pins/companion-patched-hub.json`](../pins/companion-patched-hub.json).
-- V0.5 delta is limited to embedded PWA launch behavior (`focus-existing` → `navigate-existing`) and exact same-origin `/sessions/<UUID>` routing. Hub API, Relay contract, and database schema/migrations are unchanged.
-- This transition must replace/restore the complete Hub build together with its embedded web assets; it has no database rollback step.
+- Contract v1 adds the additive `input-request` event kind. Schema v27 reconciles the upstream-v26 queue index with the Companion-v26 device/outbox lineage while preserving ACK cursors and queued events.
+- This transition must replace/restore the complete Hub build together with its embedded web assets. Rollback must also restore the pre-upgrade v26 database; an older binary must never start on v27.
 - The patch remains owned by HAPI Companion. The updater owns replay, validation, switching, and rollback.
 
 ## Mandatory release gate

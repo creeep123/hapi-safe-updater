@@ -4,7 +4,7 @@
 Credentials exist only in process memory. Hub output is captured in a mode-0600
 file inside the temporary directory and removed with that directory.
 """
-import json, os, secrets, signal, socket, sqlite3, subprocess, sys, tempfile, time, urllib.error, urllib.request, uuid
+import hashlib, json, os, secrets, signal, socket, sqlite3, subprocess, sys, tempfile, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 
@@ -20,6 +20,18 @@ def request(url, method="GET", headers=None, body=None, timeout=5):
 
 def require(ok, stage):
     if not ok: raise RuntimeError(f"candidate gate failed: {stage}")
+
+
+def read_frames(base, headers, count):
+    req=urllib.request.Request(base+"/companion/events",headers=headers)
+    with urllib.request.urlopen(req,timeout=5) as stream:
+        require(stream.headers.get_content_type()=="text/event-stream","SSE content type")
+        frames=[]; frame=[]
+        while len(frames)<count:
+            line=stream.readline().decode().rstrip("\r\n")
+            if line: frame.append(line)
+            elif frame: frames.append(frame); frame=[]
+        return frames
 
 
 def main():
@@ -60,24 +72,43 @@ def main():
             require(isinstance(catalog.get("capabilities",{}).get("turnDuration"),bool) and isinstance(catalog.get("sessions"),list),"session catalog JSON contract")
             allowed={"id","title","machineName","updatedAt","active"}
             require(all(isinstance(x,dict) and set(x)<=allowed and isinstance(x.get("id"),str) and isinstance(x.get("title"),str) for x in catalog["sessions"]),"session catalog projection")
+            with sqlite3.connect(db) as con:
+                require(con.execute("PRAGMA user_version").fetchone()[0]==27,"schema v27")
             event_id=str(uuid.uuid4()); now=int(time.time()*1000)
-            payload={"version":1,"eventId":event_id,"createdAt":now,"kind":"session-completed","title":"Candidate gate","body":"Isolated event","severity":"success","sessionId":str(uuid.uuid4()),"sessionName":"Candidate","url":"/sessions/"+str(uuid.uuid4())}
+            payload={"version":1,"eventId":event_id,"createdAt":now,"kind":"session-completed","title":"Candidate gate","body":"Isolated event","severity":"success","sessionId":str(uuid.uuid4()),"sessionName":"Candidate","url":"/sessions/"+str(uuid.uuid4()),"durationMs":1234}
             with sqlite3.connect(db) as con:
                 cur=con.execute("INSERT INTO companion_notification_outbox(event_id,namespace,payload_json,created_at,expires_at) VALUES(?,?,?,?,?)",(event_id,"default",json.dumps(payload),now,now+60000)); seq=cur.lastrowid
-            req=urllib.request.Request(base+"/companion/events",headers=device)
-            with urllib.request.urlopen(req,timeout=5) as stream:
-                require(stream.headers.get_content_type()=="text/event-stream","SSE content type")
-                frames=[]; frame=[]
-                while len(frames)<2:
-                    line=stream.readline().decode().rstrip("\r\n")
-                    if line: frame.append(line)
-                    elif frame: frames.append(frame); frame=[]
-                require(any(x=="event: connected" for x in frames[0]),"SSE connected first frame")
-                require(any(x=="event: notification" for x in frames[1]) and any(x==f"id: {seq}" for x in frames[1]),"SSE isolated event")
+            frames=read_frames(base,device,2)
+            require(any(x=="event: connected" for x in frames[0]),"SSE connected first frame")
+            require(any(x=="event: notification" for x in frames[1]) and any(x==f"id: {seq}" for x in frames[1]),"SSE isolated event")
+            require(any('"durationMs":1234' in x for x in frames[1]),"durationMs contract")
             st,_,raw=request(base+"/companion/ack","POST",device,{"seq":seq,"eventId":event_id})
             require(st==200 and json.loads(raw).get("ok") is True,"ACK")
             with sqlite3.connect(db) as con: ack=con.execute("SELECT last_ack_seq FROM companion_devices WHERE id=?",(reg["deviceId"],)).fetchone()[0]
             require(ack==seq,"ACK cursor advancement")
+
+            replay_id=str(uuid.uuid4()); foreign_id=str(uuid.uuid4()); replay_payload={**payload,"eventId":replay_id,"title":"Replay gate"}
+            foreign_payload={**payload,"eventId":foreign_id,"title":"Foreign namespace"}
+            foreign_device_id=str(uuid.uuid4()); foreign_token=secrets.token_urlsafe(32)
+            with sqlite3.connect(db) as con:
+                replay_seq=con.execute("INSERT INTO companion_notification_outbox(event_id,namespace,payload_json,created_at,expires_at) VALUES(?,?,?,?,?)",(replay_id,"default",json.dumps(replay_payload),now,now+60000)).lastrowid
+                foreign_seq=con.execute("INSERT INTO companion_notification_outbox(event_id,namespace,payload_json,created_at,expires_at) VALUES(?,?,?,?,?)",(foreign_id,"other",json.dumps(foreign_payload),now,now+60000)).lastrowid
+                con.execute("INSERT INTO companion_devices(id,installation_id,namespace,name,token_hash,created_at,updated_at,last_ack_seq,enabled) VALUES(?,?,?,?,?,?,?,?,1)",(foreign_device_id,str(uuid.uuid4()),"other","Foreign gate",hashlib.sha256(foreign_token.encode()).hexdigest(),now,now,0))
+            replay_once=read_frames(base,device,2)
+            replay_twice=read_frames(base,device,2)
+            for observed in (replay_once,replay_twice):
+                require(any(x==f"id: {replay_seq}" for x in observed[1]),"unacked event replay")
+                require(not any(foreign_id in x for frame in observed for x in frame),"namespace stream isolation")
+            foreign={"Authorization":f"Bearer {foreign_token}","X-Hapi-Device-Id":foreign_device_id}
+            require(request(base+"/companion/ack","POST",device,{"seq":foreign_seq,"eventId":foreign_id})[0]==409,"cross-namespace ACK rejected")
+            require(request(base+"/companion/ack","POST",foreign,{"seq":replay_seq,"eventId":replay_id})[0]==409,"foreign namespace ACK rejected")
+            swapped={"Authorization":f"Bearer {foreign_token}","X-Hapi-Device-Id":reg["deviceId"]}
+            require(request(base+"/companion/ack","POST",swapped,{"seq":replay_seq,"eventId":replay_id})[0]==401,"cross-device credential rejected")
+            st,_,raw=request(base+"/companion/ack","POST",device,{"seq":replay_seq,"eventId":replay_id})
+            require(st==200 and json.loads(raw).get("ok") is True,"replay ACK")
+            with sqlite3.connect(db) as con:
+                ack=con.execute("SELECT last_ack_seq FROM companion_devices WHERE id=?",(reg["deviceId"],)).fetchone()[0]
+            require(ack==replay_seq,"monotonic replay ACK cursor")
             print("companion candidate gate: PASS")
         finally:
             if proc.poll() is None:

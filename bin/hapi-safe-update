@@ -15,6 +15,7 @@ SOURCE_REPO=$(get SOURCE_REPO https://github.com/tiann/hapi.git); PATCH_DIR=$(ge
 REQUIRED_PATCH_FILE=$(get REQUIRED_PATCH_FILE ''); REQUIRED_PATCH_SHA256=$(get REQUIRED_PATCH_SHA256 '')
 REQUIRE_CANDIDATE_VERIFY=$(get REQUIRE_CANDIDATE_VERIFY 0); CANDIDATE_VERIFY_COMMAND=$(get CANDIDATE_VERIFY_COMMAND '')
 BINARY_INTEGRITY_PATH=$(get BINARY_INTEGRITY_PATH ''); EXPECTED_CURRENT_BINARY_SHA256=$(get EXPECTED_CURRENT_BINARY_SHA256 '')
+REQUIRE_DATABASE_ROLLBACK=$(get REQUIRE_DATABASE_ROLLBACK 0); DATABASE_SNAPSHOT_COMMAND=$(get DATABASE_SNAPSHOT_COMMAND ''); DATABASE_RESTORE_COMMAND=$(get DATABASE_RESTORE_COMMAND '')
 USE_SUDO=$(get USE_SUDO auto); HEALTHCHECK_URL=$(get HEALTHCHECK_URL ''); VERIFY_COMMAND=$(get VERIFY_COMMAND '')
 QUIESCE_COMMAND=$(get QUIESCE_COMMAND ''); RESUME_COMMAND=$(get RESUME_COMMAND ''); KEEP_LOGS=$(get KEEP_LOGS 30); KEEP_BACKUPS=$(get KEEP_BACKUPS 3)
 UNKNOWN_RECENT_MINUTES=$(get UNKNOWN_RECENT_MINUTES 15)
@@ -22,12 +23,15 @@ UNKNOWN_RECENT_MINUTES=$(get UNKNOWN_RECENT_MINUTES 15)
 [[ "$UPDATE_MODE" =~ ^(package|source)$ ]] || { echo "invalid UPDATE_MODE=$UPDATE_MODE" >&2; exit 2; }
 [[ "$BUN_INSTALL_MODE" =~ ^(frozen|no-save)$ ]] || { echo "invalid BUN_INSTALL_MODE=$BUN_INSTALL_MODE" >&2; exit 2; }
 [[ "$REQUIRE_CANDIDATE_VERIFY" =~ ^(0|1)$ ]] || { echo 'REQUIRE_CANDIDATE_VERIFY must be 0 or 1' >&2; exit 2; }
+[[ "$REQUIRE_DATABASE_ROLLBACK" =~ ^(0|1)$ ]] || { echo 'REQUIRE_DATABASE_ROLLBACK must be 0 or 1' >&2; exit 2; }
 [[ -z "$REQUIRED_PATCH_SHA256" || "$REQUIRED_PATCH_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'REQUIRED_PATCH_SHA256 must be a SHA-256 hex digest' >&2; exit 2; }
 [[ -z "$EXPECTED_CURRENT_BINARY_SHA256" || "$EXPECTED_CURRENT_BINARY_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'EXPECTED_CURRENT_BINARY_SHA256 must be a SHA-256 hex digest' >&2; exit 2; }
 [[ -z "$REQUIRED_PATCH_FILE" && -z "$REQUIRED_PATCH_SHA256" || -n "$REQUIRED_PATCH_FILE" && -n "$REQUIRED_PATCH_SHA256" ]] || { echo 'REQUIRED_PATCH_FILE and REQUIRED_PATCH_SHA256 must be configured together' >&2; exit 2; }
 [[ "$REQUIRE_CANDIDATE_VERIFY" != 1 || -n "$CANDIDATE_VERIFY_COMMAND" ]] || { echo 'CANDIDATE_VERIFY_COMMAND is required when REQUIRE_CANDIDATE_VERIFY=1' >&2; exit 2; }
 [[ -z "$EXPECTED_CURRENT_BINARY_SHA256" || -n "$BINARY_INTEGRITY_PATH" ]] || { echo 'BINARY_INTEGRITY_PATH is required with EXPECTED_CURRENT_BINARY_SHA256' >&2; exit 2; }
 [[ -z "$QUIESCE_COMMAND" && -z "$RESUME_COMMAND" || -n "$QUIESCE_COMMAND" && -n "$RESUME_COMMAND" ]] || { echo 'QUIESCE_COMMAND and RESUME_COMMAND must be configured together' >&2; exit 2; }
+[[ -z "$DATABASE_SNAPSHOT_COMMAND" && -z "$DATABASE_RESTORE_COMMAND" || -n "$DATABASE_SNAPSHOT_COMMAND" && -n "$DATABASE_RESTORE_COMMAND" ]] || { echo 'DATABASE_SNAPSHOT_COMMAND and DATABASE_RESTORE_COMMAND must be configured together' >&2; exit 2; }
+[[ "$REQUIRE_DATABASE_ROLLBACK" != 1 || -n "$DATABASE_SNAPSHOT_COMMAND" ]] || { echo 'database snapshot and restore commands are required when REQUIRE_DATABASE_ROLLBACK=1' >&2; exit 2; }
 
 STATE="$ROOT/state"; LOGS="$ROOT/logs"; WORK="$ROOT/worktrees"; mkdir -p -m 700 "$STATE" "$LOGS" "$WORK"
 [[ ! -f "$STATE/ROLLBACK_FAILED" ]] || { echo "ROLLBACK_FAILED exists; repair manually, verify HAPI, then remove $STATE/ROLLBACK_FAILED" >&2; exit 70; }
@@ -171,6 +175,13 @@ if [[ -n "$BINARY_INTEGRITY_PATH" ]]; then
   [[ -z "$expected_sha" || "$(printf '%s' "$PRE_UPDATE_BINARY_SHA" | tr 'A-F' 'a-f')" == "$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')" ]] || die 'installed binary differs from the recorded production baseline; refusing to overwrite it'
   log "production binary baseline captured: sha256=$PRE_UPDATE_BINARY_SHA"
 fi
+DATABASE_SNAPSHOT_READY=0
+if [[ -n "$DATABASE_SNAPSHOT_COMMAND" ]]; then
+  log 'capturing verified database rollback snapshot before maintenance'
+  HSU_STATE="$STATE" HSU_STAMP="$STAMP" bash -lc "$DATABASE_SNAPSHOT_COMMAND" || die 'database snapshot failed; production remains untouched'
+  DATABASE_SNAPSHOT_READY=1
+  log 'database rollback snapshot verified'
+fi
 discover_services
 service_inventory=$(printf '%s\n' "${ACTIVE_UNITS[*]-}" "${ACTIVE_PLISTS[*]-}")
 if printf '%s\n' "$service_inventory" | grep -q runner || [[ "$ROLE" == runner || "$ROLE" == hub+runner ]]; then [[ -n "$VERIFY_COMMAND" ]] || die 'Runner updates require VERIFY_COMMAND to prove reconnection'; fi
@@ -187,6 +198,9 @@ rollback(){
   else
     sudo -n rm -rf "$NPM_ROOT/$PACKAGE" || { log 'rollback remove failed'; ok=0; }
     sudo -n tar -xzf "$TREE_BACKUP" -C "$NPM_ROOT" || { log 'rollback extract failed'; ok=0; }
+  fi
+  if [[ "$DATABASE_SNAPSHOT_READY" == 1 ]]; then
+    HSU_STATE="$STATE" HSU_STAMP="$STAMP" bash -lc "$DATABASE_RESTORE_COMMAND" || { log 'database restore failed'; ok=0; }
   fi
   resume || { log 'rollback resume failed'; ok=0; }
   [[ "$(version || true)" == "$CURRENT" ]] || { log "rollback version mismatch: $(version || true)"; ok=0; }

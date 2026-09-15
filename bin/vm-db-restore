@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+: "${HSU_STATE:?HSU_STATE is required}"
+: "${HSU_STAMP:?HSU_STAMP is required}"
+POINTER="$HSU_STATE/vm-db-snapshot-current"
+test -f "$POINTER"
+STAMP=$(sed -n 's/^stamp=//p' "$POINTER")
+BACKUP=$(sed -n 's/^backup=//p' "$POINTER")
+EXPECTED=$(sed -n 's/^sha256=//p' "$POINTER")
+test "$STAMP" = "$HSU_STAMP"
+case "$BACKUP" in /data/hapi-backups/hapi-pre-v0307-*.db) ;; *) exit 1;; esac
+test -f "$BACKUP"
+test "$(sha256sum "$BACKUP" | cut -c1-64)" = "$EXPECTED"
+! systemctl --user is-active --quiet hapi-hub.service
+! systemctl --user is-active --quiet hapi-runner.service
+TARGET=/home/moses/.hapi/hapi.db
+RESTORED="/home/moses/.hapi/.hapi-restored-$HSU_STAMP.db"
+FAILED="/home/moses/.hapi/hapi.failed-v27-$HSU_STAMP.db"
+python3 - "$BACKUP" "$RESTORED" <<'PY'
+import os, sqlite3, sys
+source, destination = sys.argv[1:]
+src = sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=60)
+dst = sqlite3.connect(destination)
+try:
+    with dst:
+        src.backup(dst, pages=4096, sleep=0.05)
+finally:
+    dst.close()
+    src.close()
+os.chmod(destination, 0o600)
+con = sqlite3.connect(f"file:{destination}?mode=ro", uri=True, timeout=60)
+try:
+    assert con.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert con.execute("PRAGMA user_version").fetchone()[0] == 26
+finally:
+    con.close()
+PY
+test ! -e "$FAILED"
+mv "$TARGET" "$FAILED"
+rm -f "$TARGET-wal" "$TARGET-shm"
+mv "$RESTORED" "$TARGET"

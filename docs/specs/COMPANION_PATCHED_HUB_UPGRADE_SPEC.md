@@ -38,6 +38,8 @@ All checks run before service quiesce or production-tree mutation:
    - authenticated `/companion/events` begins with the `connected` SSE frame;
    - publishing an isolated test event and ACKing its `{seq,eventId}` succeeds and advances monotonically;
 7. ephemeral credentials are held only in process memory or a mode-`0600` temporary file removed by the harness trap, never printed.
+8. unacknowledged events replay after reconnect; cross-device and cross-namespace credentials or ACKs are rejected;
+9. when the pin introduces schema v27, a production-database copy must preserve Companion rows and ACK cursors through v26→v27, and an old v26 binary may be started only after restoring a v26 backup.
 
 Any failure exits before production mutation.
 
@@ -50,6 +52,7 @@ Any failure exits before production mutation.
 - On failure, restore the complete previous tree offline and require the restored binary SHA-256 to equal the pre-update value.
 - A failed rollback creates `ROLLBACK_FAILED` and freezes later scheduled updates.
 - Because the Companion database migration is forward-only, production enablement also requires configured and drilled database snapshot/restore commands; binary-tree rollback alone is not enough after migration.
+- The current v0.30.7 pin migrates v26→v27. Any rollback must restore the v26 database before the old executable is resumed; changing only `user_version` is forbidden.
 
 ## Non-goals
 
