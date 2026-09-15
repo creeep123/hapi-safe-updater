@@ -6,7 +6,7 @@
 - The updater supports source builds, patch replay, offline npm-tree rollback, Hub health checks, and Runner reconnection checks.
 - The HAPI Companion production constraint was **not** previously represented as a first-class gate.
 - Required-patch identity, immutable dependency-install policy, isolated Companion candidate verification, and binary-integrity rollback checks are implemented on the default branch; production adoption remains a separate rollout task.
-- The HAPI v0.30.7 pin uses `bun install --frozen-lockfile`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged.
+- Bun lockfile compatibility is handled explicitly: the V0.5 pin uses `no-save`, then verifies the committed `bun.lock` digest and all package manifests remain unchanged. It never falls back to a mutable install.
 - Linux scheduled candidate builds run in a separate updater service with percentage-based memory/swap limits and `OOMPolicy=stop`; resource exhaustion must kill the candidate build, not production Hub/Runner.
 - The repository now includes a credential-safe staged Runner smoke verifier (`bin/verify-runner-smoke.py`) covering auth, active-machine lookup, Codex models, spawn, message acceptance, and agent reply. Its isolated HTTP-contract tests assert that secrets and response bodies never enter output.
 
@@ -22,14 +22,16 @@
 ## Production profile: VM HAPI Hub
 
 - The VM Hub is a maintained patched build, not an unmodified upstream package.
-- Recorded production binary SHA-256: `324a88f0d5a9e11cbb401c845cfb5da1a8387380126ff752f64ba7b9231ad917`.
+- Recorded current production binary SHA-256: `324a88f0d5a9e11cbb401c845cfb5da1a8387380126ff752f64ba7b9231ad917`.
 - Authoritative patch source: `/Users/mayuming/develop/hapi-companion/integrations/hapi/hapi-companion.patch`.
-- Current immutable Companion commit: `940cb28a5642a5d536ea972cadf2aac25be27a72` (PR #23 merge commit).
-- Target HAPI baseline: `0239edf38e2da653d662f31039e24ccea04c7837` (`v0.30.7`).
-- Current authoritative patch SHA-256: `f7492b0fb2614f0963c473007b1c3910eab80aa04bb2ab44dc96613fa8c5dd5b` (previous: `399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf`).
+- Current immutable Companion commit: `5fb0db093a70a6c0ffcd51969404c39927ad7707` (merged PR #24; includes the Linux shared-Codex transport hotfix).
+- Current HAPI baseline: `0239edf38e2da653d662f31039e24ccea04c7837` (`v0.30.7`).
+- Current authoritative patch SHA-256: `2e75aa3ce6eaf7d965639d48feff3f0dc7ff4352306b48a1c28de1a5d35f5757` (previous production patch: `f7492b0fb2614f0963c473007b1c3910eab80aa04bb2ab44dc96613fa8c5dd5b`).
+- The first patched v0.30.7 production switch completed at 2026-09-15 21:35 with binary SHA-256 `a7026c767f4d46ae252d44b69bc08a30fc8dd013383d93b238a6aec070025954` and schema v27, but its Linux Runner could not complete Codex session webhooks because Bun 1.3.13 terminated the Unix-socket WebSocket connection. The cumulative PR #24 patch selects authenticated loopback TCP on Linux/Windows and must pass a real Linux app-server initialize plus Runner spawn/message/reply before production replacement.
+- The PR #24 transport hotfix was deployed on 2026-09-16 after all Linux candidate gates passed. Production binary SHA-256 is `88f986cd4bf857145b251f41e79df7343e6cd3ec99c58e2016c7c4a869243859`; Hub and Runner are active, schema remains v27, the production Companion contract passed, and a real Codex Runner smoke passed auth/machine/models/spawn/message/reply. A verified v27 database snapshot and the prior complete package tree are retained for rollback. Real Mac Companion notification delivery remains a separate human acceptance step.
 - Machine-readable pin: [`docs/pins/companion-patched-hub.json`](../pins/companion-patched-hub.json).
-- Contract v1 adds the additive `input-request` event kind. Schema v27 reconciles the upstream-v26 queue index with the Companion-v26 device/outbox lineage while preserving ACK cursors and queued events.
-- This transition must replace/restore the complete Hub build together with its embedded web assets. Rollback must also restore the pre-upgrade v26 database; an older binary must never start on v27.
+- The candidate keeps Companion envelope version 1 and adds `kind=input-request`; the existing Mac client decodes `kind` as a string. It retains title, body, requestId, and exact same-origin `/sessions/<UUID>` routing.
+- Production remains on schema v27. Hotfix rollback restores the pre-hotfix v27 database snapshot together with the prior complete Hub build and embedded web assets.
 - The patch remains owned by HAPI Companion. The updater owns replay, validation, switching, and rollback.
 
 ## Mandatory release gate

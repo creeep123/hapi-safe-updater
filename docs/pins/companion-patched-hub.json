@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "companionRepository": "https://github.com/creeep123/hapi-companion",
-  "companionCommit": "940cb28a5642a5d536ea972cadf2aac25be27a72",
+  "companionCommit": "5fb0db093a70a6c0ffcd51969404c39927ad7707",
   "patchPath": "integrations/hapi/hapi-companion.patch",
-  "patchSha256": "f7492b0fb2614f0963c473007b1c3910eab80aa04bb2ab44dc96613fa8c5dd5b",
-  "previousPatchSha256": "399b6afc8e5ec1b6ad2a32152b3008905f697c42d68ca2325b4489e1ae60b0cf",
+  "patchSha256": "2e75aa3ce6eaf7d965639d48feff3f0dc7ff4352306b48a1c28de1a5d35f5757",
+  "previousPatchSha256": "f7492b0fb2614f0963c473007b1c3910eab80aa04bb2ab44dc96613fa8c5dd5b",
   "hapiRepository": "https://github.com/tiann/hapi",
   "hapiBaselineCommit": "0239edf38e2da653d662f31039e24ccea04c7837",
   "hapiBaselineDescription": "v0.30.7",
   "bunInstallMode": "frozen",
-  "contractChanges": "Contract v1 adds the additive input-request event kind.",
-  "databaseSchemaChanges": "Forward-only v26 to v27 reconciliation migration.",
-  "rollback": "Restore both the prior complete Hub build and its pre-upgrade v26 database backup; never start the older v26 binary on a v27 database."
+  "contractChanges": "Envelope version remains 1; adds kind=input-request while retaining title, body, requestId, and exact-session URL. Linux/Windows shared Codex transport uses authenticated loopback TCP; Darwin retains Unix sockets.",
+  "databaseSchemaChanges": "Schema v27; idempotent v26 to v27 reconciliation covers upstream-v26 queue index and prior Companion-v26 device/outbox tables while preserving ACK cursor and queued events.",
+  "rollback": "Restore the pre-hotfix schema-v27 database backup together with the prior complete Hub build and embedded web assets."
 }
