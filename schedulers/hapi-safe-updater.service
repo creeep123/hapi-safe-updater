@@ -5,6 +5,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=__ROOT__/bin/scheduled-run
+Environment=NODE_OPTIONS=--max-old-space-size=1536
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
