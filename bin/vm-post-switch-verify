@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+for _ in $(seq 1 60); do
+  if curl -fsS --max-time 2 http://127.0.0.1:8080/health >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null
+systemctl --user is-active --quiet hapi-hub.service
+systemctl --user is-active --quiet hapi-runner.service
+/home/moses/.local/share/hapi-safe-updater/bin/vm-production-contract.py
