@@ -2,6 +2,8 @@
 
 ## Current state
 
+- **2026-09-25 local ARM follow-up:** native ARM Linux synthetic Hub → Runner → real Codex 0.154.0 → local fake provider → exact Hub reply and provider-error propagation both passed in an offline, unmounted, resource-limited Docker container. This is partial ARM evidence only, not VM x86_64/systemd/rollback, fleet equivalence or production acceptance. See [ARM chain evidence](ARM_LINUX_CHAIN_20260925.md); prior x86 emulation startup OOM remains recorded separately. No production/pin/timer change.
+
 - **2026-09-25 fleet override:** automatic production upgrades remain paused. The deployment identities, enabled-timer statements and snapshot-restore guidance below are historical, not authority to replace the current maintained fleet or restore an old database. Component-specific release verification and a separately authorized production window are required.
 - Companion PR #41 merged: independently verified main commit `75f335aac9f6f806e23d6f3acd22994a4aecfa5e`, patch SHA-256 `0134292bf4f6dd2743bf17ad991c1be6ce61515041757447015ee97d67586c68`, baseline `0239edf38e2da653d662f31039e24ccea04c7837`. Authorized candidate pin is recorded separately in [`companion-patched-hub.candidate.json`](../pins/companion-patched-hub.candidate.json); installed/default pin remains unchanged. Local full tests, build, isolated Companion runtime and local package-restoration gates passed. **Production NO-GO:** Linux/VM runtime and rollback, fleet component reconciliation, separate switch authorization and real Edge PWA acceptance remain pending. Full evidence and artifact hashes: [PR41 candidate report](PR41_CANDIDATE_20260925.md). Earlier PR heads are audit history only.
 
