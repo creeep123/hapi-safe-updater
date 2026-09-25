@@ -1,4 +1,4 @@
-# ARM launcher safety repair — protocol 2, review candidate
+# ARM launcher safety repair — protocol 2, code review passed
 
 ## Status and authorization
 
@@ -27,3 +27,12 @@ Full updater suite is rerun for each repair commit; the initial repair had **46 
 Both independent reviewers rejected initial repair `0a3fb1919d7804ebc9860aadbf80232297fcba73` because its entrypoint caught its own `SystemExit(0)` inside `except BaseException`, producing a spurious FAIL and exit 1 after success. The follow-up returns an integer from `main()` and places `sys.exit(main())` outside the exception handler. Tests cover main success/failure/interruption and execution of the real `__main__` block with a simulated host boundary. The four safety fixes were positively assessed, but that initial repair is **not** an approved version. Follow-up review must pin the new immutable commit.
 
 Independent review must pin the repair commit and assess the four fixes and remaining scope statements before reuse. No default/candidate pin, production process/DB, Colima configuration, automatic upgrade or PR timer was changed. The review branch remains unmerged; repair publication is separate from production authorization.
+
+## Independent fixed-commit review
+
+Reviewed code commit: **`ac54476efdd1b7190c0594818c85adba47abc71d`**, including repair `0a3fb1919d7804ebc9860aadbf80232297fcba73` plus the entrypoint correction. Two independent reviewers assessed fixed Git objects without Docker/VM/production access or file edits.
+
+- **Standards/security: PASS, 0 remaining blocking findings.** Confirmed four safety repairs and the entrypoint fix; independently simulated successful, failed and interrupted main calls and the real `__main__` block. Other Docker clients remain outside the cooperating lock, and unknown cleanup must be reconciled.
+- **Spec/evidence: PASS, 0 remaining blocking findings.** Independently ran all 19 ARM harness tests, confirmed the single terminal verdict and scope boundaries; no production/VM/model/upgrade scope creep. Historical runtime evidence remains attributed solely to `2dfb56b`.
+
+This is **static/simulated review PASS only**. No protocol-v2 container has been built or run, no new runtime PASS is claimed, and no VM x86_64/systemd/fleet equivalence/production rollback or deployment authorization follows. The documentation commit recording this result must not be mistaken for a separately runtime-tested tool version; the approved code identity is the fixed commit above.
