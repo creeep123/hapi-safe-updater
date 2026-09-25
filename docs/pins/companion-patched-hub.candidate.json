@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "status": "candidate-only-not-deployment-approved",
+  "companionRepository": "https://github.com/creeep123/hapi-companion",
+  "companionCommit": "75f335aac9f6f806e23d6f3acd22994a4aecfa5e",
+  "patchPath": "integrations/hapi/hapi-companion.patch",
+  "patchSha256": "0134292bf4f6dd2743bf17ad991c1be6ce61515041757447015ee97d67586c68",
+  "previousPatchSha256": "2e75aa3ce6eaf7d965639d48feff3f0dc7ff4352306b48a1c28de1a5d35f5757",
+  "hapiRepository": "https://github.com/tiann/hapi",
+  "hapiBaselineCommit": "0239edf38e2da653d662f31039e24ccea04c7837",
+  "hapiBaselineDescription": "v0.30.7",
+  "bunInstallMode": "frozen",
+  "contractChanges": "Relative to previous cumulative patch, only embedded Web PWA UUID versions 1-8 and UUID-v7 regression coverage change. Envelope version 1 and input-request, Linux transport and Companion API remain unchanged.",
+  "databaseSchemaChanges": "Schema remains v27; this delta has no migration. Cumulative patch retains earlier v26 to v27 reconciliation.",
+  "rollback": "Matched prior Hub and embedded Web package, preserving the current v27 DB. Do not downgrade user_version or automatically restore an older DB snapshot for this Web-only change.",
+  "releaseConstraints": [
+    "Keep all fleet automatic upgrades paused; this candidate pin is not installed configuration.",
+    "Reconcile and preserve separately maintained fleet replay, child-status, Hub override and transport components before deployment.",
+    "VM shadow and production switching require separate authorization.",
+    "Real Edge PWA exact-session click requires post-deployment human acceptance."
+  ]
+}

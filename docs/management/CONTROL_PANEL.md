@@ -2,6 +2,9 @@
 
 ## Current state
 
+- **2026-09-25 fleet override:** automatic production upgrades remain paused. The deployment identities, enabled-timer statements and snapshot-restore guidance below are historical, not authority to replace the current maintained fleet or restore an old database. Component-specific release verification and a separately authorized production window are required.
+- Companion PR #41 merged: independently verified main commit `75f335aac9f6f806e23d6f3acd22994a4aecfa5e`, patch SHA-256 `0134292bf4f6dd2743bf17ad991c1be6ce61515041757447015ee97d67586c68`, baseline `0239edf38e2da653d662f31039e24ccea04c7837`. Authorized candidate pin is recorded separately in [`companion-patched-hub.candidate.json`](../pins/companion-patched-hub.candidate.json); installed/default pin remains unchanged. Local full tests, build, isolated Companion runtime and local package-restoration gates passed. **Production NO-GO:** Linux/VM runtime and rollback, fleet component reconciliation, separate switch authorization and real Edge PWA acceptance remain pending. Full evidence and artifact hashes: [PR41 candidate report](PR41_CANDIDATE_20260925.md). Earlier PR heads are audit history only.
+
 - Fresh-user and repository-link handoffs enter through `docs/agents/NEW_INSTALL.md`, which connects this updater to HAPI Companion without merging project ownership.
 - The updater supports source builds, patch replay, offline npm-tree rollback, Hub health checks, and Runner reconnection checks.
 - The HAPI Companion production constraint was **not** previously represented as a first-class gate.
