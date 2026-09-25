@@ -2,6 +2,8 @@
 
 Date: 2026-09-25, Asia/Shanghai. **ARM CONTAINER PARTIAL PASS; PRODUCTION NO-GO remains.**
 
+**Historical tool version:** the runtime results below belong to `2dfb56b413ab3cda5c6e898123355ba3f2a602ea` and the exact image IDs recorded below. Subsequent independent review rejected that launcher's reusable safety guarantees (concurrency race, uncertain-create cleanup, inherited Docker configuration and permissive output handling). These historical runs remain partial observations, not approval to reuse that tool. The protocol-v2 repair is tracked separately in [ARM launcher hardening](ARM_LAUNCHER_HARDENING_20260925.md); it has not run a new container acceptance test. No runtime PASS may be transferred from the old version to the repair.
+
 ## What actually ran
 
 On this Mac's existing local Colima Docker daemon (Linux aarch64, 2 CPUs, approximately 2 GiB RAM), a newly compiled ARM HAPI executable ran a fresh Hub and Runner. Installed real **Codex 0.154.0 ARM Linux** ran behind HAPI's authenticated loopback TCP app-server transport. A Python fixture, not a model service, answered one Responses request.
@@ -53,11 +55,11 @@ The existing Darwin/x86 candidates and both pins were not replaced.
 
 ## Isolation and test implementation
 
-`bin/verify-arm-container.py` is separate from install/update entry points. Host mode accepts only an immutable image ID and uses the local Colima socket. It refuses to start if another container is running, checks created container mount/network configuration, and imposes a 240-second deadline with exact-container cleanup. No SSH, systemd, deployment, scheduler, host process kill or image pull is implemented.
+At the recorded tool version, `bin/verify-arm-container.py` was separate from install/update entry points. Host mode accepted only an immutable image ID and used the local Colima socket. It performed one point-in-time running-container check, checked created container mount/network configuration and imposed a 240-second deadline. Review subsequently found that this did not guarantee mutual exclusion or cleanup after uncertain creation. No SSH, systemd, deployment, scheduler, host process kill or image pull was implemented.
 
 Execution: `--network none`, no mounts or published ports, read-only root, non-root UID 65534, all capabilities dropped, no-new-privileges, 1 GiB memory/no extra swap, 0.75 CPU, 128 PIDs, 192 MiB `/work` tmpfs plus 32 MiB `/tmp` tmpfs, Docker logging disabled. Worker checks loopback-only interfaces, outbound denial to a documentation-reserved IP, effective capabilities, no-new-privileges, cgroup limits, hidden host paths and environment allowlist before any HAPI/Codex launch. Child environment is explicitly constructed, not inherited from this HAPI maintenance conversation. All fixture/test auth and DB state are synthetic.
 
-Worker stdout is structured non-sensitive summaries only. Child stdout/stderr are suppressed; application-created test logs stay in bounded tmpfs and are destroyed. Host cleanup removes only its freshly created random-name container; no broad prune. Container exit destroys any detached descendants too; this is **container lifecycle cleanup**, not proof of production Runner graceful control takeover.
+In these observed runs, worker stdout contained structured non-sensitive summaries; the old launcher did not enforce a strict field whitelist. Child stdout/stderr were suppressed; application-created test logs stayed in bounded tmpfs and were destroyed. Recorded host cleanup removed the created random-name containers, without broad prune; the old implementation's uncertain-create case was not covered. Container exit destroys detached descendants too; this is **container lifecycle cleanup**, not proof of production Runner graceful control takeover.
 
 TDD unit tests cover fail-closed container arguments/image references, fixed-local-daemon selection, fixture auth/model/nonce/repeated-call rejection, and exact sequenced agent-message acceptance (reject missing user, stale sequence, wrong nonce and error envelope). Four new tests passed; full updater suite: **33 tests, 31 passed / 2 opt-in Mac real-Codex tests skipped**. `git diff --check` is required before archival. Unit-test fake responses are not being substituted for the real container runs above.
 
@@ -84,4 +86,4 @@ python3 bin/verify-arm-container.py --image sha256:<new-image-id>
 python3 bin/verify-arm-container.py --image sha256:<new-image-id> --fail-provider
 ```
 
-These commands cannot pull/install/deploy and will refuse concurrent Docker workloads. Rebuilding a test image does not authorize increasing Colima resources, accessing VM/production, changing pins or using a real provider.
+Do not execute this recipe until the repaired fixed commit passes independent review. The old claim that these commands "will refuse concurrent Docker workloads" was too strong: a one-time check cannot exclude races. The repair serializes cooperating launchers and rechecks before start; it cannot lock out unrelated Docker clients. Rebuilding a test image does not authorize increasing Colima resources, accessing VM/production, changing pins or using a real provider.

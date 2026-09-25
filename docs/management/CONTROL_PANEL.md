@@ -2,6 +2,8 @@
 
 ## Current state
 
+- **ARM launcher review hold:** `2dfb56b` runtime observations remain historical partial evidence, but independent review found four reusable-launcher safety gaps. A protocol-v2 repair with simulated failure tests is prepared in [the hardening record](ARM_LAUNCHER_HARDENING_20260925.md). No new container acceptance runs before fixed-commit review; no merge, pin or production change.
+
 - **2026-09-25 local ARM follow-up:** native ARM Linux synthetic Hub → Runner → real Codex 0.154.0 → local fake provider → exact Hub reply and provider-error propagation both passed in an offline, unmounted, resource-limited Docker container. This is partial ARM evidence only, not VM x86_64/systemd/rollback, fleet equivalence or production acceptance. See [ARM chain evidence](ARM_LINUX_CHAIN_20260925.md); prior x86 emulation startup OOM remains recorded separately. No production/pin/timer change.
 
 - **2026-09-25 fleet override:** automatic production upgrades remain paused. The deployment identities, enabled-timer statements and snapshot-restore guidance below are historical, not authority to replace the current maintained fleet or restore an old database. Component-specific release verification and a separately authorized production window are required.

@@ -16,6 +16,121 @@ import threading
 import time
 import urllib.request
 import urllib.error
+from contextlib import contextmanager
+import fcntl
+import stat
+import tempfile
+import selectors
+import shutil
+
+OWNER_LABEL = 'io.hapi.safe-updater.arm-test-owner'
+WORKER_PROTOCOL = 2
+CLEAN_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'
+
+
+def bounded_command(args, env, timeout=20, limit=65536):
+    """Docker CLI boundary: bounded memory/time; no stderr or arbitrary exception text."""
+    process = subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    try:
+        with selectors.DefaultSelector() as poller:
+            poller.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, 'docker_command_timeout')
+                if not poller.select(min(remaining, .2)):
+                    continue
+                chunk = os.read(process.stdout.fileno(), min(8192, limit + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                require(len(output) <= limit, 'docker_output_limit')
+        try:
+            code = process.wait(timeout=max(.01, deadline-time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise RuntimeError('docker_command_timeout') from None
+        require(code == 0, 'docker_command_failed')
+        return bytes(output)
+    finally:
+        with termination_scope(cleaning=True):
+            try:
+                if process.poll() is None:
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                        process.wait(timeout=2)
+            finally:
+                process.stdout.close()
+
+
+class DockerClient:
+    def __init__(self, prefix, env):
+        self.prefix, self.env = prefix, env
+
+    def run(self, *args):
+        return bounded_command([*self.prefix, *args], self.env)
+
+    def collect(self, container_id):
+        return bounded_command([*self.prefix, 'start', '--attach', container_id],
+                               self.env, timeout=240, limit=16384)
+
+
+@contextmanager
+def isolated_docker(home):
+    endpoint = docker_prefix(home)[1:]
+    binary = shutil.which('docker', path=CLEAN_PATH)
+    require(binary is not None and os.path.isabs(binary), 'docker_binary_missing')
+    with tempfile.TemporaryDirectory(prefix='hsu-arm-docker-config-') as directory:
+        config = Path(directory)
+        (config/'config.json').write_text('{}')
+        os.chmod(config/'config.json', 0o600)
+        yield DockerClient([binary, '--config', str(config), *endpoint],
+                           {'PATH': CLEAN_PATH, 'HOME': str(config), 'LANG': 'C.UTF-8'})
+
+
+def safe_container_env(entries):
+    patterns = {'PATH': r'/usr/local/bin:/usr/bin:/bin', 'HOME': r'/work', 'LANG': r'C.UTF-8',
+                'GPG_KEY': r'[0-9A-F]{40}', 'PYTHON_VERSION': r'3\.12\.[0-9]{1,2}',
+                'PYTHON_SHA256': r'[0-9a-f]{64}'}
+    if not isinstance(entries, list) or len(entries) > len(patterns):
+        return False
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, str) or '=' not in entry:
+            return False
+        key, value = entry.split('=', 1)
+        if key in seen or key not in patterns or re.fullmatch(patterns[key], value) is None:
+            return False
+        seen.add(key)
+    return {'PATH', 'HOME', 'LANG'} <= seen
+
+
+@contextmanager
+def exclusive_lease(path):
+    """Per-user cooperating-launcher lease; never unlink a held/stable lock inode."""
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        metadata = os.fstat(fd)
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
+                and stat.S_IMODE(metadata.st_mode) == 0o600 and metadata.st_nlink == 1,
+                'unsafe_lease_file')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('launcher_busy') from None
+        yield
+    finally:
+        os.close(fd)
 
 
 def has_reply(messages, local_id, nonce):
@@ -91,13 +206,15 @@ def container_args(image, name):
     if not re.fullmatch(r'hsu-arm-test-[a-z0-9-]{1,40}', name):
         raise ValueError('dedicated_name_required')
     return ['create', '--name', name, '--pull', 'never', '--platform', 'linux/arm64',
+            '--env', 'PATH=/usr/local/bin:/usr/bin:/bin', '--env', 'HOME=/work', '--env', 'LANG=C.UTF-8',
             '--network', 'none', '--read-only', '--cap-drop', 'ALL',
             '--security-opt', 'no-new-privileges', '--memory', '1g',
             '--memory-swap', '1g', '--cpus', '0.75', '--pids-limit', '128',
             '--user', '65534:65534', '--tmpfs', '/work:rw,nosuid,nodev,size=192m,mode=1777',
             '--tmpfs', '/tmp:rw,nosuid,nodev,size=32m,mode=1777',
-            '--log-driver', 'none', '--entrypoint', '/usr/local/bin/python3',
-            image, '-B', '/opt/gate/verify-arm-container.py', '--worker']
+            '--log-driver', 'none', '--entrypoint', '/usr/bin/timeout',
+            image, '--signal=TERM', '--kill-after=5s', '240s',
+            '/usr/local/bin/python3', '-B', '/opt/gate/verify-arm-container.py', '--worker']
 
 
 def docker_prefix(home):
@@ -114,6 +231,47 @@ def require(ok, stage):
 
 def emit(stage, **fields):
     print(json.dumps({'stage': stage, **fields}), flush=True)
+
+
+def validate_worker_output(raw, fail_provider):
+    """No raw worker field is forwarded; require a complete, versioned transcript."""
+    require(isinstance(raw, bytes) and len(raw) <= 16384, 'worker_output_limit')
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, 'duplicate_evidence_key')
+            result[key] = value
+        return result
+    records = [json.loads(line, object_pairs_hook=unique_object) for line in raw.splitlines()]
+    shapes = [
+        {'stage': 'isolation', 'passed': True, 'architecture': 'aarch64', 'memoryMax': 1073741824,
+         'artifactHashes': None},
+        {'stage': 'versions', 'passed': True, 'hapi': '0.30.7', 'codex': '0.154.0'},
+        {'stage': 'hub', 'passed': True, 'health': 200, 'auth': 200, 'unauthCompanion': 401},
+        {'stage': 'runner', 'passed': True, 'activeMachines': 1},
+        {'stage': 'models', 'passed': True, 'count': None, 'providerRequests': 0},
+        {'stage': 'spawn', 'passed': True, 'webhook': True, 'authenticatedCodexTCP': True},
+        {'stage': 'message', 'passed': True},
+        {'stage': 'reply', 'passed': True, 'providerRequests': 1, 'failurePropagated': fail_provider,
+         'exactReply': not fail_provider, 'thinking': False},
+        {'stage': 'result', 'status': 'ARM_WORKER_CHAIN_COMPLETE', 'protocol': WORKER_PROTOCOL,
+         'productionApproved': False, 'vmSystemdVerified': False, 'rollbackVerified': False,
+         'memoryPeakBytes': None}]
+    require(len(records) == len(shapes), 'evidence_stages')
+    for record, shape in zip(records, shapes):
+        require(isinstance(record, dict) and set(record) == set(shape), 'evidence_fields')
+        for key, expected in shape.items():
+            if expected is not None:
+                require(type(record[key]) is type(expected) and record[key] == expected, 'evidence_value')
+    hashes = records[0]['artifactHashes']
+    require(isinstance(hashes, dict) and set(hashes) == {'hapi', 'codex'}
+            and all(isinstance(v, str) and re.fullmatch(r'[0-9a-f]{64}', v) for v in hashes.values()),
+            'evidence_hashes')
+    count, peak = records[4]['count'], records[-1]['memoryPeakBytes']
+    require(type(count) is int and 1 <= count <= 10000, 'evidence_model_count')
+    require(type(peak) is int and 0 < peak <= 1073741824, 'evidence_memory')
+    return {'providerFailureTest': fail_provider, 'modelCount': count, 'memoryPeakBytes': peak,
+            'artifactHashes': {'hapi': hashes['hapi'], 'codex': hashes['codex']}}
 
 
 def worker(fail_provider=False):
@@ -153,6 +311,9 @@ def worker(fail_provider=False):
             else:
                 raise RuntimeError('network_escape')
         hashes = json.loads(Path('/opt/gate/artifacts.json').read_text())
+        require(isinstance(hashes, dict) and set(hashes) == {'hapi', 'codex'}
+                and all(isinstance(v, str) and re.fullmatch(r'[0-9a-f]{64}', v) for v in hashes.values()),
+                'artifact_manifest')
         for name in ('hapi', 'codex'):
             binary = Path('/opt/gate/' + ('bin/codex' if name == 'codex' else name))
             with binary.open('rb') as stream:
@@ -304,13 +465,13 @@ supports_websockets = false
         require(state['accepted'] == (0 if fail_provider else 1), 'provider_accept_count')
         emit(stage, passed=True, providerRequests=state['requests'], failurePropagated=fail_provider,
              exactReply=not fail_provider, thinking=False)
-        emit('result', status='ARM_CONTAINER_PARTIAL_PASS', productionApproved=False,
+        emit('result', status='ARM_WORKER_CHAIN_COMPLETE', protocol=WORKER_PROTOCOL, productionApproved=False,
              vmSystemdVerified=False, rollbackVerified=False,
              memoryPeakBytes=int(Path('/sys/fs/cgroup/memory.peak').read_text()))
         return 0
-    except Exception as error:
+    except Exception:
         emit('result', status='FAIL', failedStage=stage,
-             reason=str(error) if isinstance(error, RuntimeError) else type(error).__name__,
+             reason='worker_gate_failed',
              providerRequests=state['requests'], productionApproved=False)
         return 1
     finally:
@@ -328,48 +489,125 @@ supports_websockets = false
             server.shutdown()
 
 
-def host(image, fail_provider=False):
-    # This launcher never builds/pulls images or talks to SSH/systemd/production.
-    prefix = docker_prefix(str(Path.home()))
-    def docker(*args):
-        return subprocess.run([*prefix, *args], check=True, capture_output=True, timeout=20).stdout
-    info = json.loads(docker('info', '--format', '{{json .}}'))
-    require(info.get('Architecture') == 'aarch64', 'native_arm_daemon_required')
-    require(not docker('ps', '-q').strip(), 'other_containers_running_defer')
+@contextmanager
+def termination_scope(cleaning=False):
+    """SIGTERM unwinds normally; a second signal cannot interrupt owned cleanup."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {}
+    def interrupted(_number, _frame):
+        raise KeyboardInterrupt()
+    try:
+        for number in (signal.SIGTERM, signal.SIGINT):
+            previous[number] = signal.signal(number, signal.SIG_IGN if cleaning else interrupted)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+def inspect_owned(client, name, owner, image):
+    ids = client.run('ps', '-a', '-q', '--no-trunc', '--filter', 'name=^/'+name+'$').decode().split()
+    require(len(ids) <= 1 and all(re.fullmatch(r'[0-9a-f]{64}', cid) for cid in ids), 'container_identity')
+    if not ids:
+        return None
+    result = json.loads(client.run('inspect', ids[0]))
+    require(isinstance(result, list) and len(result) == 1, 'container_identity')
+    container = result[0]
+    require(container.get('Id') == ids[0] and container.get('Name') == '/'+name
+            and container.get('Image') == image
+            and container.get('Config', {}).get('Labels', {}).get(OWNER_LABEL) == owner,
+            'container_ownership_mismatch')
+    return container
+
+
+def cleanup_owned(client, name, owner, image, acknowledged):
+    """Unknown create results are inspected, never assumed absent or globally pruned."""
+    removed = False
+    for attempt in range(2):
+        try:
+            container = inspect_owned(client, name, owner, image)
+            if container is None:
+                # A timed-out create may still complete later. Don't certify absence.
+                return acknowledged or removed
+            client.run('rm', '-f', container['Id'])
+            removed = True
+            if inspect_owned(client, name, owner, image) is None:
+                return True
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(.1)
+    return False
+
+
+def run_host_transaction(client, image, fail_provider=False):
+    """Public orchestration seam; client is the Docker boundary, not a fake Hub."""
     name = 'hsu-arm-test-' + secrets.token_hex(6)
+    owner = secrets.token_hex(16)
     args = container_args(image, name)
+    args[1:1] = ['--label', OWNER_LABEL+'='+owner]
     if fail_provider:
         args.append('--fail-provider')
-    created = False
-    attach = None
+    attempted = acknowledged = False
+    cleanup_verified = True
+    summary = None
+    phase = 'preflight'
     try:
-        docker(*args)
-        created = True
-        config = json.loads(docker('inspect', name))[0]
+        info = json.loads(client.run('info', '--format', '{{json .}}'))
+        require(info.get('Architecture') == 'aarch64' and type(info.get('MemTotal')) is int
+                and info['MemTotal'] >= 2_000_000_000, 'daemon_resource_floor')
+        require(not client.run('ps', '-q').strip(), 'other_containers_running_defer')
+        phase = 'create'
+        attempted = True
+        created_id = client.run(*args).decode().strip()
+        require(re.fullmatch(r'[0-9a-f]{64}', created_id), 'create_identity')
+        acknowledged = True
+        phase = 'inspect'
+        config = inspect_owned(client, name, owner, image)
+        require(config is not None and config['Id'] == created_id, 'created_identity')
         require(not config['Mounts'] and config['HostConfig']['NetworkMode'] == 'none'
                 and config['HostConfig']['ReadonlyRootfs'] is True, 'docker_config_mismatch')
-        attach = subprocess.Popen([*prefix, 'start', '--attach', name], stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL)
-        try:
-            output, _ = attach.communicate(timeout=240)
-        except subprocess.TimeoutExpired:
-            docker('stop', '--time', '2', name)
-            attach.communicate(timeout=10)
-            raise RuntimeError('container_deadline') from None
-        # Worker prints only structured non-sensitive summaries. Reject unexpected output.
-        records = [json.loads(line) for line in output.splitlines()]
-        for record in records:
-            print(json.dumps(record))
-        end = json.loads(docker('inspect', name))[0]['State']
-        emit('container_exit', exitCode=end['ExitCode'], oom=end['OOMKilled'], running=end['Running'])
-        require(end['ExitCode'] == 0 and not end['OOMKilled'] and not end['Running']
-                and any(r.get('status') == 'ARM_CONTAINER_PARTIAL_PASS' for r in records), 'container_gate_failed')
-        return 0
+        require(safe_container_env(config['Config'].get('Env')), 'container_environment')
+        # Point-in-time only: unrelated Docker clients do not participate in our lock.
+        require(not client.run('ps', '-q').strip(), 'other_containers_running_defer')
+        phase = 'start'
+        output = client.collect(created_id)
+        phase = 'evidence'
+        summary = validate_worker_output(output, fail_provider)
+        phase = 'exit'
+        end = inspect_owned(client, name, owner, image)['State']
+        require(type(end['ExitCode']) is int and end['ExitCode'] == 0
+                and end['OOMKilled'] is False and end['Running'] is False, 'container_gate_failed')
+    except BaseException:
+        # Includes user interruption and SIGTERM. Never interpolate Docker/worker text.
+        summary = None
     finally:
-        if created:
-            # Exact random name created here, never wildcard/prune or another session's container.
-            docker('rm', '-f', name)
-            emit('container_cleanup', removed=True)
+        with termination_scope(cleaning=True):
+            if attempted:
+                cleanup_verified = cleanup_owned(client, name, owner, image, acknowledged)
+    if summary is not None and cleanup_verified:
+        emit('host_result', status='ARM_CONTAINER_PARTIAL_PASS', protocol=WORKER_PROTOCOL,
+             cleanupVerified=True, productionApproved=False, vmSystemdVerified=False,
+             rollbackVerified=False, **summary)
+        return 0
+    fields = {'status': 'FAIL', 'phase': phase if cleanup_verified else 'cleanup', 'cleanupVerified': cleanup_verified,
+              'productionApproved': False}
+    if not cleanup_verified:
+        # Non-sensitive generated identifiers for exact manual follow-up; not credentials.
+        fields.update(residualContainer=name, ownershipLabel=owner,
+                      cleanupAction='inspect_exact_name_and_owner_before_removal')
+    emit('host_result', **fields)
+    return 1
+
+
+def host(image, fail_provider=False):
+    require(sys.platform == 'darwin', 'local_mac_host_required')
+    # Stable lock is per local user/socket, independent of cwd or checkout.
+    lease = Path('/private/tmp') / ('hsu-arm-colima-'+str(os.getuid())+'.lock')
+    with termination_scope(), exclusive_lease(lease), isolated_docker(str(Path.home())) as client:
+        return run_host_transaction(client, image, fail_provider)
 
 
 if __name__ == '__main__':
@@ -382,7 +620,6 @@ if __name__ == '__main__':
         sys.exit(worker(options.fail_provider))
     try:
         sys.exit(host(options.image, options.fail_provider))
-    except Exception as error:
-        emit('host_result', status='FAIL', reason=str(error) if isinstance(error, RuntimeError)
-             else type(error).__name__, productionApproved=False)
+    except BaseException:
+        emit('host_result', status='FAIL', phase='host_preflight_or_cleanup', productionApproved=False)
         sys.exit(1)
