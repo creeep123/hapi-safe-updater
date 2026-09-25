@@ -62,3 +62,18 @@ Working source and transient build/test logs: `/private/tmp/hsu-pr41-20260925.A9
 - Linux real Codex transport test is skipped on Darwin by design. Linux runtime, actual Runner spawn/message/reply, VM rollback and production-equivalent Bun validation remain pending. This build used Bun 1.3.14; prior approved Linux evidence used 1.3.13 and does not validate this artifact.
 - VM shadow and production switch require separate approval. All automatic production upgrades stay paused.
 - After an approved deployment, real Edge PWA exact-session click remains a human acceptance gate.
+
+## Proposed VM Linux acceptance scope — not executed or authorized by this report
+
+This is a candidate runtime test, NOT Sidecar shadow. It does not subscribe to production SSE, consume real notifications, or change notification ownership. Sidecar shadow and production rollout each retain their own approval.
+
+Minimum VM impact after explicit approval:
+
+1. Transfer checksum-verified candidates and harness into a new restricted staging directory, outside installed application/config paths. No compilation inside the production Runner cgroup; prefer prebuilt artifacts. Record Bun/Codex versions and resolve the 1.3.14 candidate versus previously approved 1.3.13 build difference explicitly.
+2. Use a separate transient resource-limited systemd unit/cgroup with a finite runtime, no persistent timer and no production service dependencies. Determine CPU/memory/disk headroom read-only first and set limits below available headroom; insufficient capacity means defer or use a disposable external Linux host, not risk production OOM.
+3. Start candidate Hub/Runner only on loopback with separate HOME/HAPI_HOME, disposable schema27 DB, fresh test credentials and machine identity. Never register the test Runner on the production Hub. Do not read/copy production database or credentials as an implicit part of this test.
+4. Run Linux real Codex app-server initialize/transport and isolated Companion contract gates. A real model-backed Runner spawn/message/reply additionally requires an approved test authentication method and bounded model usage; do not copy production account credentials into staging or silently substitute a mock for the real gate.
+5. Rehearse matched Linux Hub+Web package replacement and restoration only in staging, keeping synthetic schema27 data/cursors across the code rollback. Reconciled fleet components and a verified prior Linux package are required before claiming production-equivalent rollback.
+6. Record before/after production service identities and updater pause state read-only. Stop only the transient test processes; retain non-sensitive evidence/artifact hashes and remove test secrets/state. No production restart, port/proxy/firewall change, installed-pin update or scheduler enablement.
+
+Expected effects are bounded disk/CPU/memory and temporary loopback listeners, plus explicitly approved network/model calls if real Runner smoke is included. Zero production outage is the design objective, not an unproven guarantee on a shared VM. This VM write/process/resource scope needs a separate explicit authorization before execution; current authorization has been exercised for local non-production acceptance only. Approval of these tests would not authorize Sidecar shadow, production replacement or resuming automatic upgrades.
