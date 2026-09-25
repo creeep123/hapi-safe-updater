@@ -610,16 +610,20 @@ def host(image, fail_provider=False):
         return run_host_transaction(client, image, fail_provider)
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--worker', action='store_true')
     parser.add_argument('--image')
     parser.add_argument('--fail-provider', action='store_true')
-    options = parser.parse_args()
+    options = parser.parse_args(argv)
     if options.worker:
-        sys.exit(worker(options.fail_provider))
+        return worker(options.fail_provider)
     try:
-        sys.exit(host(options.image, options.fail_provider))
+        return host(options.image, options.fail_provider)
     except BaseException:
         emit('host_result', status='FAIL', phase='host_preflight_or_cleanup', productionApproved=False)
-        sys.exit(1)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

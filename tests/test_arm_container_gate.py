@@ -104,6 +104,38 @@ def module():
 
 
 class ContainerBoundaryTests(unittest.TestCase):
+    def test_script_entrypoint_exits_zero_without_catching_its_own_system_exit(self):
+        import ast
+        gate = module()
+        source = Path(gate.__file__).read_text()
+        entry = ast.Module(body=[ast.parse(source).body[-1]], type_ignores=[])
+        namespace = {**gate.__dict__, '__name__': '__main__'}
+        output = io.StringIO()
+        with patch.object(gate, 'host', return_value=0), \
+                patch.object(sys, 'argv', ['gate', '--image', IMAGE]), redirect_stdout(output):
+            with self.assertRaises(SystemExit) as stopped:
+                exec(compile(entry, '<entrypoint-only>', 'exec'), namespace)
+        self.assertEqual(stopped.exception.code, 0)
+        self.assertEqual(output.getvalue(), '')  # No spurious FAIL from the entrypoint.
+
+    def test_cli_main_preserves_success_failure_and_one_terminal_record(self):
+        gate = module()
+        for code in (0, 1):
+            def transaction(*_args):
+                gate.emit('host_result', status='ARM_CONTAINER_PARTIAL_PASS' if code == 0 else 'FAIL')
+                return code
+            output = io.StringIO()
+            with patch.object(gate, 'host', side_effect=transaction), redirect_stdout(output):
+                self.assertEqual(gate.main(['--image', IMAGE]), code)
+            self.assertEqual(len(output.getvalue().splitlines()), 1)
+            self.assertEqual(json.loads(output.getvalue())['status'],
+                             'ARM_CONTAINER_PARTIAL_PASS' if code == 0 else 'FAIL')
+        output = io.StringIO()
+        with patch.object(gate, 'host', side_effect=KeyboardInterrupt()), redirect_stdout(output):
+            self.assertEqual(gate.main(['--image', IMAGE]), 1)
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertEqual(json.loads(output.getvalue())['status'], 'FAIL')
+
     def test_unknown_absent_create_is_reported_unconfirmed_not_clean(self):
         gate = module()
         client = SimulatedDocker('create_unknown_absent')
